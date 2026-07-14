@@ -19,6 +19,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, status
 
 from app.schemas.model import ModelCreate, ModelRead, ModelUpdate, now_iso
+from app.schemas.model_test import ModelTestResult
 from app.services import keyring_service
 from app.services.keyring_service import (
     KeychainUnavailableError,
@@ -34,6 +35,7 @@ from app.services.models_store import (
     list_models,
     update_model,
 )
+from app.services.model_tester import test_model_connection
 
 router = APIRouter(prefix="/models", tags=["models"])
 
@@ -139,5 +141,20 @@ async def delete_model_endpoint(model_id: str) -> None:
         delete_api_key(key_id)
     delete_model(model_id)
 
+
+@router.post("/{model_id}/test", response_model=ModelTestResult)
+async def test_model_endpoint(model_id: str) -> ModelTestResult:
+    """Probe a model's OpenAI-compatible endpoint to verify connectivity.
+
+    This does not modify the stored model config; a failed test never blocks
+    model save operations.
+    """
+    existing = get_model(model_id)
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="模型不存在"
+        )
+    result = await test_model_connection(existing)
+    return ModelTestResult(**result)
 
 __all__ = ["router"]
