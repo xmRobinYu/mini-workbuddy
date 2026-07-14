@@ -111,3 +111,11 @@
   - Ralph 指向已完成实现、但仍处于 develop 阶段且没有 notes 的 story 时，先用对应提交和质量检查确认状态，避免重复实现。
   - 本环境可能没有预装 `uv` 或项目 `.venv`；可安装项目声明依赖后使用 `python3 -m pytest` 与 `python3 -m mypy app` 进行等价复核。
 ---
+## 2026-07-14 19:25 - US-004
+- 复核已提交的模型连接测试 API 实现（`51d7fae`），当前 work package 无 Validator 失败备注，无需修改源代码。
+- 更改的文件：`scripts/ralph/progress.txt`（追加复核记录）。
+- 质量检查：`uv run pytest tests/test_models_test_api.py`、`uv run pytest`、`uv run mypy app` 全部通过。
+- **未来迭代的学习：**
+  - 连接测试通过独立的 `model_tester.py` service 执行最小 `chat/completions` 请求，并用 `choices` 字段验证 OpenAI 兼容响应。
+  - 复核已完成的 develop 阶段 story 时，仅在存在 Validator notes 时修复；无 notes 时保留现有实现并运行相关质量检查。
+---
