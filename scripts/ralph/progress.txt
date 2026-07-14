@@ -76,3 +76,13 @@
   - 测试重置 workspace 文件直接 `MODELS_FILE.write_text("[]")`，比调 ensure_workspace 更干净；每个测试独立重置避免相互依赖
   - 连接测试 API（POST /api/models/{id}/test）是后续 story（B-11），本 story 只做 CRUD + 密钥存储，不要提前实现
 ---
+
+## 2026-07-14 17:10 - US-003
+- 验证已有 US-003 实现（commit b1902f4）通过全部质量检查，无需修复
+  - mypy: Success: no issues found in 13 source files
+  - pytest: 17 passed（含 4 个 health + 13 个 models API 测试）
+- 更改的文件：scripts/ralph/progress.txt（追加验证记录）
+- **未来迭代的学习：**
+  - 当 RALPH_STORY_ID 指向已开发完成但 passes=false 的 story，且 notes 为空时，说明处于 develop_and_validate 模式的 develop 阶段已完成、等待 Validator；此时不应重新实现，只需复跑质量检查确认绿色，不要提前置 passes=true
+  - workflowMode 字段缺失即默认 develop_and_validate，开发 agent 的职责边界是"实现 + 自检通过 + 提交"，passes 的翻 true 由 Validator 负责
+---
