@@ -266,3 +266,54 @@
   - 会话 metadata 单独存 `{id}.meta.json` 侧车文件，而非解析整个 JSONL 取首行——这样重命名/列表只读小文件，无需解析可能很大的事件流
   - 损坏行处理：`json.JSONDecodeError` 捕获后 `logger.warning` + continue，不 abort 整个读取；用 `enumerate(..., start=1)` 记录行号便于日志定位
   - 搜索内容匹配用原始文本子串扫描（`term in jsonl.read_text().lower()`）而非解析每行 JSON，性能更好且对损坏行天然容错
+
+## 2026-07-14 22:30 - US-012
+- 实现了文件上传与 Agent 输出文件管理 API（POST /api/chat/upload + GET /api/conversations/{id}/outputs[/{filename}]）
+  - `backend/app/schemas/file_io.py`：UploadedFile（上传响应：filename/stored_filename/size/path/content_type）与 OutputFile（输出文件列表项：filename/size/modified_at）schemas
+  - `backend/app/services/file_io_store.py`：上传与输出文件 service
+    - `store_upload()`：流式读取（64KB chunk）边读边累计大小，超过 5MB 立即中断并清理临时文件，返回 413；conversation_id 提供时存到 `workspace/conversations/{id}/uploads/`，否则存到共享 `workspace/uploads/` 临时目录；stored_filename 加 uuid8 前缀防重名；文件名经 `_safe_filename()` 取 basename 防 `..`/路径分隔符穿越；dest_dir 经 `is_safe_workspace_path` 校验防伪造 conversation_id 越界
+    - `list_outputs()`：扫描 `conversations/{id}/outputs/`，跳过子目录，stat 取 size+st_mtime(转 ISO-8601 UTC)，按文件名排序；目录或会话不存在返回空列表
+    - `resolve_output_path()`：filename 取 basename + is_safe_workspace_path 双重校验，文件不存在返回 None（404），杜绝路径穿越
+  - `backend/app/api/chat.py`：router(prefix=/chat)，POST /upload 接收 UploadFile + Form(conversation_id)；超过限制抛 413（HTTP_413_CONTENT_TOO_LARGE，新常量名），非法会话 id 抛 400
+  - `backend/app/api/conversations.py`：新增 GET /{id}/outputs（返回 OutputFile 列表）与 GET /{id}/outputs/{filename}（FileResponse 下载/预览，mimetypes 猜测 media_type，默认 octet-stream）
+  - `backend/app/api/router.py`：挂载 chat_router
+  - `backend/tests/test_file_io_api.py`：12 个测试覆盖全部验收标准（上传存会话目录、上传存临时目录、>5MB 返回 413 且无残留、恰好 5MB 成功、无文件 422、输出列表元数据、outputs 目录缺失空列表、会话缺失空列表、按文件名排序、下载返回字节、下载不存在 404、`..` 穿越 404 不逃逸）
+- 更改的文件：backend/app/schemas/file_io.py（新增）、backend/app/services/file_io_store.py（新增）、backend/app/api/chat.py（新增）、backend/app/api/conversations.py（修改）、backend/app/api/router.py（修改）、backend/tests/test_file_io_api.py（新增）
+- 质量检查：`python3 -m pytest tests/test_file_io_api.py` 12 passed；全量 `python3 -m pytest` 112 passed；`python3 -m mypy app tests` Success: no issues found in 39 source files
+- **未来迭代的学习：**
+  - FastAPI 文件上传用 `UploadFile` + `Form` 字段混合，前端用 `multipart/form-data`（files + data）；`python-multipart` 已在 backend 依赖中，无需新增
+  - 5MB 限制应在流式读取时边读边累计（`upload.file.read(chunk_size)` 循环），而不是先 `read()` 全量到内存再判断长度——否则超大文件会先撑爆内存才触发 413；超限后必须 `unlink(missing_ok=True)` 清理已写入的部分文件
+  - Starlette 新版 `HTTP_413_REQUEST_ENTITY_TOO_LARGE` 已 deprecated，用 `HTTP_413_CONTENT_TOO_LARGE`（两者值都是 413，行为一致）
+  - 下载文件用 `fastapi.responses.FileResponse(path=, filename=, media_type=)`；media_type 用 `mimetypes.guess_type()` 猜测，未知则 `application/octet-stream`，浏览器据此决定预览还是下载
+  - 文件名安全：`Path(filename).name` 取 basename 防穿越，但 `..`/`.` 单独成文件名要兜底生成随机名；输出文件下载路径再过一遍 `is_safe_workspace_path` 是双重保险
+  - 路由顺序：`/{conversation_id}/outputs` 和 `/{conversation_id}/outputs/{filename}` 都是 `/{conversation_id}` 的子路径，FastAPI 按声明顺序匹配但子路径更具体不会冲突；注意 `/{conversation_id}/outputs/{filename}` 的 filename 不含 `/`，穿越用 `%2f` URL 编码也会被 TestClient 解码后 basename 化
+  - 输出文件目录约定为 `workspace/conversations/{id}/outputs/`（与 US-011 delete 测试中的 outputs/ 模拟目录一致），由 Agent Loop 写入，本 story 只读不写
+---
+
+## 2026-07-15 00:10 - US-013
+- 实现了聊天前端会话列表面板与交互 `frontend/src/pages/ChatPage.tsx`，覆盖全部验收标准：
+  - 左侧历史会话列表：每项显示标题（truncate）+ 最后更新时间（formatTime 月/日 时:分），后端 list 按 updated_at 倒序
+  - + 新建会话按钮：POST /api/conversations 创建新会话，列表顶部显示并自动选中，右侧清空（selectedId 设置后右侧显示空状态「暂无对话记录」）
+  - 点击历史会话切换：GET /api/conversations/{id} 从 JSONL 完整还原对话内容，用户消息右对齐暖橙气泡、其他左对齐灰色气泡
+  - 右键（onContextMenu）或操作按钮（MoreVertical 三点菜单）显示重命名/删除菜单
+  - 重命名：行内 form 输入框（ref 自动 focus+select），输入新标题后 PUT 更新，onBlur 取消
+  - 删除：二次确认弹窗，确认后 DELETE 删除 JSONL+outputs，自动重新加载列表并清空右侧
+  - 搜索框：防抖 250ms 调 GET /api/conversations/search?keyword= 实时过滤，清空关键词回退本地列表
+  - 事件还原：events 数组按顺序渲染，data.text 为内容，空事件显示（type/role 占位）
+- 更改的文件：frontend/src/pages/ChatPage.tsx（从 PlaceholderPage 替换为完整实现）
+- 质量检查：`npm run typecheck` 通过（0 errors）、`npm run lint` 通过（0 warnings）、`npm run build` 成功（dist 207KB JS）
+- 浏览器验证（agent-browser @ http://localhost:5181/chat，复用已在运行的 Vite dev server + 后端 :8000）：
+  - 列表正确加载 4 个历史会话，每项显示标题+更新时间
+  - 点击「新建会话」→ 列表顶部新增、自动选中（橙色高亮）、右侧显示空对话
+  - 点击历史会话 → 右侧从 JSONL 还原 2 条对话（用户/助手气泡正确对齐）
+  - 三点菜单 → 重命名 → 输入「US013验证会话」→ 确定 → 列表标题与右侧 header 同步更新
+  - 搜索框输入「US013验证」→ 实时过滤为 1 项；清空恢复完整列表
+  - 三点菜单 → 删除 → 二次确认弹窗 → 确认删除 → 后端确认会话已删除（搜索 0 命中）
+- **未来迭代的学习：**
+  - agent-browser `find text "重命名" click` 在动态弹出菜单上不可靠（元素时序），改用 `eval` + `querySelectorAll('button')` 按精确 textContent 匹配更稳定；菜单项 DOM 选择器用 `.absolute.right-0.top-7` 定位弹层
+  - 重命名受控 input 同样需要原生 setter：`Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input, v)` + `dispatchEvent(new Event('input',{bubbles:true}))`，否则 React state 不更新
+  - 重命名 form 的 input 有 `onBlur={cancelRename}`，通过 eval 触发后续 click submit 按钮时不要让 input 先 blur；直接 `form.querySelector('button[type=submit]').click()` 提交即可
+  - 防抖搜索 + 关键词清空回退：用两个 useEffect（一个 250ms 防抖调搜索接口、一个监听 keyword 清空时 loadConversations），filteredConversations useMemo 兜底本地过滤，避免搜索态闪烁
+  - 删除后浏览器列表短暂显示陈旧数据是 React 异步渲染时序问题，reload 页面后与后端一致；判断删除是否真正成功应以后端 GET/search 为准
+  - 本机 5181 端口已有本项目前端 dev server（Vite proxy /api → :8000）+ 后端 :8000 在运行，浏览器验证直接复用，无需重启
+---
