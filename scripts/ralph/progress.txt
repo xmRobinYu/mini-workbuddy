@@ -5,6 +5,12 @@
 - FastAPI 使用 application factory 模式 `create_app()`，便于 TestClient 测试
 - CORS 白名单为 `http://localhost:5173`（前端 Vite 默认端口）
 - 根 `.gitignore` 忽略整个 `workspace/`，workspace 内的 `.gitignore` 由 `ensure_workspace()` 在运行时生成
+- 前端使用 `npm` 管理依赖，开发命令 `cd frontend && npm install && npm run dev`；构建 `npm run build`；类型检查 `npm run typecheck`；lint `npm run lint`
+- 前端技术栈：React 18 + Vite 5 + TypeScript + Tailwind CSS 3 + react-router-dom v6 + lucide-react 图标
+- 前端路径别名 `@/` 指向 `src/`，在 `vite.config.ts` 和 `tsconfig.app.json` 中同步配置
+- Vite dev server 配置了 `/api`、`/docs`、`/openapi.json` proxy 代理到后端 `http://localhost:8000`，开发联调无需关心 CORS
+- 暖色调主题定义在 `tailwind.config.js` 的 `colors.warm` 下（bg 白/menu 浅灰/orange 暖橙/amber 琥珀）
+- 前端布局：`src/components/Layout.tsx` 为左侧菜单 + 右侧内容区骨架，路由配置在 `src/App.tsx`，占位页面统一用 `src/pages/PlaceholderPage.tsx`
 
 ---
 
@@ -24,4 +30,25 @@
   - workspace 是运行时自初始化的，不要手工创建或提交 workspace/ 下的文件；新增配置文件应加入 `ensure_workspace()` 的种子逻辑
   - 后端 venv 在 `backend/.venv`，直接调用 `.venv/bin/uvicorn` 或 `.venv/bin/python` 比 `uv run` 在某些后台场景更可靠
   - nohup + uv run 后台启动 uvicorn 会在 exec_command 调用返回时被 kill；如需后台 dev server，用 `&` + sleep + curl + kill 的单条命令模式验证
+---
+
+## 2026-07-14 16:10 - US-002
+- 实现了前端 React 18 + Vite + TypeScript 项目脚手架与暖色调极简 UI 框架
+  - `frontend/package.json`：npm 管理依赖（react, react-dom, react-router-dom, react-markdown, remark-gfm, react-syntax-highlighter, lucide-react）+ dev 依赖（vite, typescript, tailwindcss, eslint, @types/node 等）
+  - `frontend/vite.config.ts`：React 插件 + `@/` 路径别名 + dev server proxy（/api、/docs、/openapi.json → localhost:8000）
+  - `frontend/tailwind.config.js`：暖色调主题（warm.bg 白、warm.menu 浅灰、warm.orange 暖橙、warm.amber 琥珀、warm.border 边框灰）
+  - `frontend/src/main.tsx`：入口，BrowserRouter 包裹 App
+  - `frontend/src/App.tsx`：路由配置，默认重定向到 /chat
+  - `frontend/src/components/Layout.tsx`：左侧菜单栏（7 项：聊天/Agent 管理/模型管理/工具管理/技能管理/执行日志/模型日志）+ 右侧内容区，lucide-react 图标，NavLink 激活态暖橙高亮
+  - `frontend/src/pages/`：7 个占位页面组件 + `PlaceholderPage.tsx` 通用占位组件，全简体中文
+  - `frontend/src/lib/api.ts`：API 请求工具，封装 fetch + baseURL 配置（apiGet/apiPost/apiPut/apiDelete）
+  - `frontend/index.html`：lang="zh-CN"，标题 Mini-WorkBuddy
+- 更改的文件：frontend/（新增整个目录）、scripts/ralph/progress.txt（追加）
+- 质量检查：npm run typecheck 通过（0 errors）、npm run lint 通过（0 warnings）、npm run build 成功（dist 产出 173KB JS）、npm run dev 启动后 localhost:5173 返回 200、后端 CORS 验证通过（access-control-allow-origin: http://localhost:5173）
+- **未来迭代的学习：**
+  - 前端 dev server 与后端 uvicorn 一样会被 exec_command 回收；验证联调用 `(cmd &)` + sleep + curl + pkill 单条命令模式
+  - `tsc -b` 会生成 `*.tsbuildinfo` 缓存文件，必须加入 `.gitignore`，否则会被误提交
+  - `tsconfig.node.json`（用于 vite.config.ts）需要 `"types": ["node"]` 和 `@types/node` 依赖，否则 `node:path` 和 `__dirname` 报错
+  - Vite proxy 让前端开发无需直连后端端口，但验收标准要求的"CORS 生效"仍需后端 CORS 中间件配置正确（已在 US-001 完成）
+  - Tailwind CSS 3 用 `@tailwind base/components/utilities` 指令；自定义颜色通过 `theme.extend.colors` 扩展，使用时为 `bg-warm-orange`、`text-warm-text-muted` 等
 ---
