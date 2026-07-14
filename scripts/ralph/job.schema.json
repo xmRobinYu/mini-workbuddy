@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skillhub.local/schemas/ralph/job.schema.json",
+  "title": "Ralph Job Configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "prdFile": { "type": "string", "minLength": 1 },
+    "workdir": { "type": "string", "minLength": 1 },
+    "stateDb": { "type": "string", "minLength": 1 },
+    "runtimePrd": { "type": "string", "minLength": 1 },
+    "progressFile": { "type": "string", "minLength": 1 },
+    "agent": {
+      "type": "string",
+      "enum": ["codex", "claude", "opencode", "atomcode"]
+    },
+    "model": { "type": "string" }
+  },
+  "required": ["prdFile", "workdir"]
+}

@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Ralph state
+scripts/ralph/ralph_state.db
+scripts/ralph/prd.json.bak
+
+# Node
+node_modules/
+dist/
+
+# Workspace (runtime data)
+workspace/
