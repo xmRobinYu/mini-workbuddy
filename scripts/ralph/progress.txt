@@ -184,3 +184,21 @@
   - FastAPI 对未定义的 DELETE /api/tools/{name} 返回 404（路径未匹配），对 POST /api/tools（路径匹配但方法不支持）返回 405；测试断言要注意区分
   - 工具函数测试用 monkeypatch 把 WORKSPACE_DIR 指向 tmp_path，同时 patch `app.core.config`、`app.core.path_security`、`app.services.tool_functions` 三处的 WORKSPACE_DIR 引用（path_security 在调用时重新 resolve，但 config 被工具函数直接引用）
 ---
+
+## 2026-07-14 20:55 - US-008
+- 实现了工具管理前端页面 `frontend/src/pages/ToolsPage.tsx`，覆盖全部验收标准：
+  - 列表展示三个内置工具（read_file / write_file / execute_command）：名称（等宽字体）、描述、启用状态开关
+  - 页面无添加/删除按钮，仅展示固定三元组（与后端 BUILTIN_TOOL_NAMES 对应）
+  - 切换启用/禁用开关立即调用 `PUT /api/tools/{name}/toggle`，使用乐观更新（先翻转 UI，失败回滚）；切换中禁用对应开关防重复点击
+  - 禁用状态持久化到 workspace/config/tools.json，刷新页面后正确回显
+  - 封装无障碍 `ToggleSwitch` 子组件（role=switch + aria-checked + aria-label + focus ring）
+- 更改的文件：frontend/src/pages/ToolsPage.tsx（从 PlaceholderPage 替换为完整实现）
+- 质量检查：`npm run typecheck` 通过（0 errors）、`npm run lint` 通过（0 warnings）、`npm run build` 成功（dist ~186KB JS）
+- 浏览器验证（agent-browser）：打开 http://localhost:5181/tools，三个工具均显示开关且 checked=true；点击 read_file 开关后 `is checked` 返回 false，后端 GET /api/tools 确认 read_file enabled=false；reload 页面后 read_file 开关仍 checked=false（刷新后状态保持）；最后重置 read_file 为 enabled
+- **未来迭代的学习：**
+  - agent-browser 在该 Linux 环境首次启动需 `--args "--no-sandbox"`（容器/AppArmor 限制）；若 daemon 已运行则 `--args` 被忽略，需先 `agent-browser close` 再带参数重启
+  - 前端开关类组件用 `role="switch"` + `aria-checked` 比 checkbox 语义更准确；Tailwind 实现：`translate-x` 控制圆点位移、`bg-warm-orange`/`bg-stone-300` 控制开关底色
+  - 乐观更新 pattern：`setTools` 先翻转目标项 → `await apiPut` → catch 中回滚到原值并 setPageError；finally 清除 togglingName 解锁开关
+  - 后端 US-007 已提供 GET /api/tools（返回 BuiltinTool 列表）与 PUT /api/tools/{name}/toggle（body {enabled:bool} 返回 {name,enabled}），前端直接复用 `apiGet/apiPut`，无需新建路由
+  - 本机 5181 端口已有本项目前端 dev server 在跑（Vite proxy /api → :8000），浏览器验证直接复用，不要重复启动
+---
