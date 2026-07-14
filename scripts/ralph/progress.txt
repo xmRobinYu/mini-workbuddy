@@ -102,3 +102,12 @@
   - `base_url` 处理：`_build_chat_url()` 兼容 `https://api.example.com`、`.../v1`、`.../chat/completions` 三种输入，自动补全为 `/v1/chat/completions`
   - 连接测试端点是只读的（不调用 add/update/delete_model），失败测试不影响已保存的模型配置
 ---
+
+## 2026-07-14 19:16 - US-001
+- 复核已提交的 FastAPI 脚手架与 workspace 初始化实现（`c87fe6f`）；当前 work package 无 Validator 失败备注，无需修改源代码。
+- 更改的文件：`scripts/ralph/progress.txt`（追加复核记录）
+- 质量检查：`python3 -m pytest` 28 passed；`python3 -m mypy app` Success: no issues found in 15 source files。
+- **未来迭代的学习：**
+  - Ralph 指向已完成实现、但仍处于 develop 阶段且没有 notes 的 story 时，先用对应提交和质量检查确认状态，避免重复实现。
+  - 本环境可能没有预装 `uv` 或项目 `.venv`；可安装项目声明依赖后使用 `python3 -m pytest` 与 `python3 -m mypy app` 进行等价复核。
+---
