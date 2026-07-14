@@ -250,3 +250,19 @@
   - 本机 5173/5174/5180/5181 端口已被其他项目占用，启动本项目前端 dev server 用 `--port 5182 --strictPort`；后端 8000 已在运行可直接复用，无需重启。
   - 工具栏目的「排除项」前端硬编码 `HIDDEN_AGENT_TOOLS = {save_memory, search_memory, delegate_task}` + `BUILTIN_TOOL_DESCRIPTIONS` 映射（与后端 TOOL_DESCRIPTIONS 对齐），因为 P0 阶段后端 BUILTIN_TOOL_NAMES 仅三元组、尚无 save_memory/delegate_task 实现。
 ---
+
+## 2026-07-14 18:30 - US-011
+- 实现了会话管理后端 CRUD + 搜索 API（GET/POST/PUT/DELETE /api/conversations + GET /api/conversations/search）
+  - `backend/app/schemas/conversation.py`：Pydantic v2 schemas（ConversationCreate/ConversationRename/ConversationSummary/ConversationDetail/ConversationEvent），事件体用 `dict[str, Any]` 透传以兼容 Agent Loop 的丰富事件字段；ConversationRename 用 min_length=1 拒绝空标题
+  - `backend/app/services/conversations_store.py`：JSONL 文件持久化。每个会话目录 `workspace/conversations/{id}/`，含 `{id}.jsonl`（事件流）+ `{id}.meta.json`（title/timestamps 侧车）。list/get/create/rename/delete/search；per-conversation `filelock` 串行化；损坏 JSONL 行跳过并 `logger.warning`；list 按 updated_at 倒序；search 标题(子串,大小写不敏感)+内容(扫描原始 JSONL 文本)双匹配
+  - `backend/app/api/conversations.py`：FastAPI router（prefix=/conversations），`/search` 路由声明在 `/{conversation_id}` 之前避免被 {id} 吞掉；POST 201 创建目录+空 JSONL；DELETE 删 JSONL+meta+outputs/+目录；404 统一"会话不存在"
+  - `backend/app/api/router.py`：挂载 conversations_router
+  - `backend/tests/test_conversations_api.py`：17 个测试覆盖全部验收标准（列表/创建UUID+目录/默认标题/详情读JSONL/空事件/404/重命名/重命名404/空标题422/删除含outputs目录/删除404/搜索标题/搜索内容/空关键词/损坏行跳过+警告日志）
+- 更改的文件：backend/app/schemas/conversation.py（新增）、backend/app/services/conversations_store.py（新增）、backend/app/api/conversations.py（新增）、backend/app/api/router.py（挂载）、backend/tests/test_conversations_api.py（新增）
+- 质量检查：mypy Success: no issues found in 26 source files；pytest 100 passed（含原 83 + 新 17）
+- **未来迭代的学习：**
+  - 会话目录锁文件（`{id}.jsonl.lock`）放在会话目录内部，导致 missing-id DELETE 时目录不存在 → FileLock 无法创建锁。解决：在 `delete_conversation` 中**先检查目录存在性再获取锁**（锁获取后二次检查防竞态），避免为不存在的会话创建空目录只为了放锁文件
+  - 路由顺序陷阱：FastAPI 按声明顺序匹配，字面路径 `/search` 必须在参数路径 `/{conversation_id}` 之前声明，否则 "search" 会被当作 {id} 绑定。GET 列表用空字符串 `""` 而非 `/` 才能匹配 `/api/conversations`
+  - 会话 metadata 单独存 `{id}.meta.json` 侧车文件，而非解析整个 JSONL 取首行——这样重命名/列表只读小文件，无需解析可能很大的事件流
+  - 损坏行处理：`json.JSONDecodeError` 捕获后 `logger.warning` + continue，不 abort 整个读取；用 `enumerate(..., start=1)` 记录行号便于日志定位
+  - 搜索内容匹配用原始文本子串扫描（`term in jsonl.read_text().lower()`）而非解析每行 JSON，性能更好且对损坏行天然容错
