@@ -65,3 +65,8 @@ def ensure_workspace() -> None:
     workspace_gitignore = WORKSPACE_DIR / ".gitignore"
     if not workspace_gitignore.exists():
         workspace_gitignore.write_text(WORKSPACE_GITIGNORE, encoding="utf-8")
+
+    # Seed the default 主 Agent so a fresh install has a usable Agent at boot.
+    from app.services.agents_store import ensure_default_agent
+
+    ensure_default_agent()
