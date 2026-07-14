@@ -140,3 +140,19 @@
   - `*.tsbuildinfo` 是 `tsc -b` 的增量缓存，已在 `.gitignore` 但历史误提交过，新增/修改后要用 `git rm --cached` 清理
   - 不属于当前 story 的改动（scripts/ralph/ralph.py supervisor、ralph_service.sh、test_ralph.py）保留未提交，不在本 commit 范围内
 ---
+
+## 2026-07-14 20:13 - US-006
+- 实现了可复用的路径安全校验工具函数 `is_safe_workspace_path`
+  - `backend/app/core/path_security.py`：`is_safe_workspace_path(target)` 三层防御：(1) 原始路径 `parts` 含 `..` 直接拒绝；(2) `os.path.islink` 逐级检查每个路径组件是否为符号链接，符号链接 resolve 后落在 workspace 外即判定逃逸拒绝；(3) `pathlib.resolve()` 解析后用 `relative_to(workspace_root)` 做前缀检查。返回 True/False
+  - 辅助函数 `_contains_symlink_escape(resolved)`：从最深组件向 workspace 根上溯，对每个存在组件做 islink + readlink resolve，避免符号链接目录把解析重定向到 workspace 外
+  - `backend/tests/test_path_security.py`：13 个单元测试覆盖全部验收标准——正常路径、workspace 根、`..` 穿越（含虽 resolve 在内但含 `..` 仍拒绝）、`..` 逃逸到外、绝对路径越界、系统路径 `/etc/passwd`、workspace 内不存在路径、符号链接逃逸、符号链接目标在内（允许）、符号链接目录组件逃逸、字符串输入、相对路径按 cwd 解析
+- 更改的文件：backend/app/core/path_security.py（新增）、backend/tests/test_path_security.py（新增）
+- 质量检查：`python3 -m pytest tests/test_path_security.py` 13 passed；全量 `python3 -m pytest` 41 passed；`python3 -m mypy app` Success: no issues found in 16 source files
+- **未来迭代的学习：**
+  - 路径安全函数是 US-007 工具层（read_file/write_file/execute_command）的前置依赖，后续工具函数应统一调用 `is_safe_workspace_path()` 校验用户传入路径后再操作文件
+  - `..` 检查应在原始 `path.parts` 上做而非 resolve 后做——resolve 会归一化 `..`，无法区分"含穿越意图的输入"与"合法归一路径"，对工具输入应从源头拒绝
+  - 符号链接逃逸需逐组件检查：仅检查最终路径的 islink 不够，父目录组件若是符号链接目录会把整个子树重定向出 workspace；从最深组件向 workspace 根上溯并 resolve readlink 目标做前缀检查
+  - 测试中创建符号链接会真实写入文件系统，不要在真实 workspace/ 下做；用 monkeypatch 替换 `app.core.path_security.WORKSPACE_DIR` 指向 tmp_path 隔离（函数内每次从 WORKSPACE_DIR.resolve() 取根，patch 常量即可生效）
+  - pytest fixture 名为 `ws` 时会被同签名测试参数自动注入；autouse + 命名 fixture 二选一，这里用命名 fixture 更直观
+  - 后端开发环境无 uv/项目 venv 时可用系统 `python3 -m pytest` 与 `python3 -m mypy app`（fastapi/httpx/keyring 等已系统装好），结果与 uv run 等价
+---
