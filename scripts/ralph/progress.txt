@@ -1,0 +1,104 @@
+## Codebase Patterns
+- 后端使用 `uv` 管理依赖，开发命令 `cd backend && uv sync --extra dev`；启动 `uv run uvicorn app.main:app --reload --port 8000`
+- 后端路径解析基于 `app/core/config.py` 中的 `PROJECT_ROOT`（`Path(__file__).resolve().parents[3]`），所有 workspace 路径常量集中在此
+- workspace 目录在运行时通过 `app/core/workspace.py` 的 `ensure_workspace()` 自初始化（lifespan 事件触发），无需手工创建或提交 runtime 文件
+- FastAPI 使用 application factory 模式 `create_app()`，便于 TestClient 测试
+- CORS 白名单为 `http://localhost:5173`（前端 Vite 默认端口）
+- 根 `.gitignore` 忽略整个 `workspace/`，workspace 内的 `.gitignore` 由 `ensure_workspace()` 在运行时生成
+- 前端使用 `npm` 管理依赖，开发命令 `cd frontend && npm install && npm run dev`；构建 `npm run build`；类型检查 `npm run typecheck`；lint `npm run lint`
+- 前端技术栈：React 18 + Vite 5 + TypeScript + Tailwind CSS 3 + react-router-dom v6 + lucide-react 图标
+- 前端路径别名 `@/` 指向 `src/`，在 `vite.config.ts` 和 `tsconfig.app.json` 中同步配置
+- Vite dev server 配置了 `/api`、`/docs`、`/openapi.json` proxy 代理到后端 `http://localhost:8000`，开发联调无需关心 CORS
+- 暖色调主题定义在 `tailwind.config.js` 的 `colors.warm` 下（bg 白/menu 浅灰/orange 暖橙/amber 琥珀）
+- 前端布局：`src/components/Layout.tsx` 为左侧菜单 + 右侧内容区骨架，路由配置在 `src/App.tsx`，占位页面统一用 `src/pages/PlaceholderPage.tsx`
+- 新增后端 API 模块：在 `app/api/<feature>.py` 定义 `APIRouter(prefix="/<feature>")`，在 `app/api/router.py` 用 `api_router.include_router(...)` 挂载，自动获得 `/api/<feature>` 前缀
+- 后端业务逻辑分三层：`app/schemas/`（Pydantic 校验）、`app/services/`（业务+持久化）、`app/api/`（路由编排）
+- 文件持久化用 `filelock.FileLock` 包裹读写，锁文件放同目录 `<name>.json.lock`；workspace/ 被 gitignore
+- keyring 密钥链可用性判断：`getattr(backend, "name", "")` 含 "fail"/"null" 即不可用，降级到 env 引用；测试用 `keyring.set_keyring(MemoryKeyring())` 注入内存 backend
+
+---
+
+## 2026-07-14 15:45 - US-001
+- 实现了后端 FastAPI 项目脚手架与 workspace 数据目录自初始化
+  - `backend/pyproject.toml`：uv 管理依赖（fastapi, uvicorn, httpx, pydantic, python-multipart, tiktoken, filelock, keyring, aiofiles, python-dateutil）+ dev 依赖（pytest, pytest-asyncio, mypy）
+  - `backend/app/main.py`：FastAPI application factory，CORS 中间件（localhost:5173），lifespan 触发 workspace 初始化，`/health` + `/api/ping` 路由
+  - `backend/app/core/config.py`：项目路径常量（PROJECT_ROOT、WORKSPACE_DIR、CONFIG_DIR 等）+ CORS_ORIGINS
+  - `backend/app/core/workspace.py`：`ensure_workspace()` 创建 workspace 目录树 + 种子文件（models.json 空数组、command_blocklist.json 9 条黑名单、workspace/.gitignore）
+  - `backend/app/api/router.py`：聚合 API 路由骨架
+  - `backend/tests/test_health.py`：4 个冒烟测试（/health、/docs、/api/ping、CORS header）
+  - `backend/README.md`：开发说明
+- 更改的文件：backend/（新增整个目录）、scripts/ralph/progress.txt（新建）
+- 质量检查：pytest 4 passed，mypy Success: no issues found in 7 source files，uvicorn 启动后 /docs 返回 200、/health 返回 {"status":"ok"}
+- **未来迭代的学习：**
+  - 后端入口是 `app.main:app`（application factory `create_app()`），测试用 `TestClient(create_app())`
+  - workspace 是运行时自初始化的，不要手工创建或提交 workspace/ 下的文件；新增配置文件应加入 `ensure_workspace()` 的种子逻辑
+  - 后端 venv 在 `backend/.venv`，直接调用 `.venv/bin/uvicorn` 或 `.venv/bin/python` 比 `uv run` 在某些后台场景更可靠
+  - nohup + uv run 后台启动 uvicorn 会在 exec_command 调用返回时被 kill；如需后台 dev server，用 `&` + sleep + curl + kill 的单条命令模式验证
+---
+
+## 2026-07-14 16:10 - US-002
+- 实现了前端 React 18 + Vite + TypeScript 项目脚手架与暖色调极简 UI 框架
+  - `frontend/package.json`：npm 管理依赖（react, react-dom, react-router-dom, react-markdown, remark-gfm, react-syntax-highlighter, lucide-react）+ dev 依赖（vite, typescript, tailwindcss, eslint, @types/node 等）
+  - `frontend/vite.config.ts`：React 插件 + `@/` 路径别名 + dev server proxy（/api、/docs、/openapi.json → localhost:8000）
+  - `frontend/tailwind.config.js`：暖色调主题（warm.bg 白、warm.menu 浅灰、warm.orange 暖橙、warm.amber 琥珀、warm.border 边框灰）
+  - `frontend/src/main.tsx`：入口，BrowserRouter 包裹 App
+  - `frontend/src/App.tsx`：路由配置，默认重定向到 /chat
+  - `frontend/src/components/Layout.tsx`：左侧菜单栏（7 项：聊天/Agent 管理/模型管理/工具管理/技能管理/执行日志/模型日志）+ 右侧内容区，lucide-react 图标，NavLink 激活态暖橙高亮
+  - `frontend/src/pages/`：7 个占位页面组件 + `PlaceholderPage.tsx` 通用占位组件，全简体中文
+  - `frontend/src/lib/api.ts`：API 请求工具，封装 fetch + baseURL 配置（apiGet/apiPost/apiPut/apiDelete）
+  - `frontend/index.html`：lang="zh-CN"，标题 Mini-WorkBuddy
+- 更改的文件：frontend/（新增整个目录）、scripts/ralph/progress.txt（追加）
+- 质量检查：npm run typecheck 通过（0 errors）、npm run lint 通过（0 warnings）、npm run build 成功（dist 产出 173KB JS）、npm run dev 启动后 localhost:5173 返回 200、后端 CORS 验证通过（access-control-allow-origin: http://localhost:5173）
+- **未来迭代的学习：**
+  - 前端 dev server 与后端 uvicorn 一样会被 exec_command 回收；验证联调用 `(cmd &)` + sleep + curl + pkill 单条命令模式
+  - `tsc -b` 会生成 `*.tsbuildinfo` 缓存文件，必须加入 `.gitignore`，否则会被误提交
+  - `tsconfig.node.json`（用于 vite.config.ts）需要 `"types": ["node"]` 和 `@types/node` 依赖，否则 `node:path` 和 `__dirname` 报错
+  - Vite proxy 让前端开发无需直连后端端口，但验收标准要求的"CORS 生效"仍需后端 CORS 中间件配置正确（已在 US-001 完成）
+  - Tailwind CSS 3 用 `@tailwind base/components/utilities` 指令；自定义颜色通过 `theme.extend.colors` 扩展，使用时为 `bg-warm-orange`、`text-warm-text-muted` 等
+---
+
+## 2026-07-14 16:35 - US-003
+- 实现了模型管理后端 CRUD API（GET/POST/PUT/DELETE /api/models）与 keyring 密钥链存储
+  - `backend/app/schemas/model.py`：Pydantic v2 schemas（ModelCreate/ModelUpdate/ModelRead），provider 枚举（deepseek/alibaba/custom），base_url 用 HttpUrl 校验，context_window_tokens 用 `gt=0` 正整数校验
+  - `backend/app/services/keyring_service.py`：OS 密钥链封装，`keychain://<id>` 引用格式；通过检测 backend name 含 "fail"/"null" 判断密钥链不可用，降级到 api_key_env；store/get/delete + ref_to_key_id 解析
+  - `backend/app/services/models_store.py`：models.json 文件 CRUD，用 filelock 加锁防并发损坏；list/get/add/update/delete + generate_id(uuid4) + reset_for_test
+  - `backend/app/api/models.py`：FastAPI router（prefix=/models），POST 存密钥到 keyring 后只写 api_key_ref 到 json；PUT 全量替换、省略 api_key 则保留原 ref；DELETE 同时清 keychain；keychain 不可用且无 api_key_env 返回 400
+  - `backend/app/api/router.py`：挂载 models_router
+  - `backend/tests/test_models_api.py`：13 个测试覆盖全部验收标准（CRUD、schema 字段、无明文密钥、keychain 实际存储、降级 env、404、422 校验、GET 读 models.json）
+- 更改的文件：backend/app/schemas/、backend/app/services/、backend/app/api/models.py、backend/app/api/router.py、backend/tests/test_models_api.py
+- 质量检查：mypy Success: no issues found in 16 source files；pytest 17 passed（含原 4 个 health 测试）
+- **未来迭代的学习：**
+  - 新增 API 模块的 pattern：在 `app/api/<feature>.py` 定义 `APIRouter(prefix="/<feature>")`，在 `app/api/router.py` 用 `api_router.include_router(...)` 挂载；路由自动获得 `/api/<feature>` 前缀（main.py 的 `prefix="/api"` + router 自身 prefix）
+  - keyring 在 CI/headless 环境下 backend 为 fail.Keyring，`set_password` 不报错但什么都不存；测试需 `keyring.set_keyring(_MemoryKeyring())` 注入内存 backend 才能断言密钥真的存了
+  - keyring backend 可用性判断：`getattr(backend, "name", "")` 含 "fail"/"null" 即不可用；生产代码据此降级到 api_key_env
+  - 文件持久化用 `filelock.FileLock` 包裹读写，锁文件放同目录 `<name>.json.lock`；workspace/ 被 gitignore，锁文件不会进 git
+  - Pydantic v2 的 HttpUrl 序列化后是 string，存 json 前要 `str(payload.base_url)`；ModelRead 用 `model_validate(dict)` 反校验存储数据
+  - 测试重置 workspace 文件直接 `MODELS_FILE.write_text("[]")`，比调 ensure_workspace 更干净；每个测试独立重置避免相互依赖
+  - 连接测试 API（POST /api/models/{id}/test）是后续 story（B-11），本 story 只做 CRUD + 密钥存储，不要提前实现
+---
+
+## 2026-07-14 17:10 - US-003
+- 验证已有 US-003 实现（commit b1902f4）通过全部质量检查，无需修复
+  - mypy: Success: no issues found in 13 source files
+  - pytest: 17 passed（含 4 个 health + 13 个 models API 测试）
+- 更改的文件：scripts/ralph/progress.txt（追加验证记录）
+- **未来迭代的学习：**
+  - 当 RALPH_STORY_ID 指向已开发完成但 passes=false 的 story，且 notes 为空时，说明处于 develop_and_validate 模式的 develop 阶段已完成、等待 Validator；此时不应重新实现，只需复跑质量检查确认绿色，不要提前置 passes=true
+  - workflowMode 字段缺失即默认 develop_and_validate，开发 agent 的职责边界是"实现 + 自检通过 + 提交"，passes 的翻 true 由 Validator 负责
+---
+
+## 2026-07-14 17:40 - US-004
+- 实现了模型连接测试 API（POST /api/models/{id}/test），使用 httpx 异步调用 OpenAI 兼容 /v1/chat/completions 接口
+  - `backend/app/schemas/model_test.py`：ModelTestResult schema（success/latency_ms/error）
+  - `backend/app/services/model_tester.py`：连接测试 service，用 httpx.AsyncClient 发送 max_tokens=1 的极简 chat 请求；根据 HTTP 状态码（401/403→认证失败、404→模型不存在、其他→HTTP 错误）和异常类型（TimeoutException→连接超时、ConnectError→连接失败）区分错误；校验响应体含 "choices" 字段以验证 OpenAI 兼容性
+  - `backend/app/api/models.py`：新增 POST /{model_id}/test 端点，404 返回模型不存在，测试为只读不修改模型配置
+  - `backend/tests/test_models_test_api.py`：11 个测试覆盖全部验收标准（成功+延迟、超时、认证失败401、模型不存在404、连接错误、非OpenAI格式、HTTP 500、不修改模型、404不存在的模型、无API密钥、env降级密钥）
+- 更改的文件：backend/app/schemas/model_test.py、backend/app/services/model_tester.py、backend/app/api/models.py、backend/tests/test_models_test_api.py
+- 质量检查：mypy Success: no issues found in 15 source files；pytest 28 passed（含 4 health + 13 models CRUD + 11 models test）
+- **未来迭代的学习：**
+  - 连接测试 service 独立于存储层：`model_tester.py` 接收 model dict，通过 `_resolve_api_key()` 从 keychain 或 env 解析密钥，不直接依赖 models_store
+  - httpx 测试用 `unittest.mock.AsyncMock` patch `httpx.AsyncClient.post`，用 `httpx.Response(status_code=, json=, request=)` 构造假响应；不需要真实网络
+  - OpenAI 兼容性校验：检查响应 JSON 是否含 "choices" 字段（chat completions 格式），不含则返回格式不兼容错误
+  - `base_url` 处理：`_build_chat_url()` 兼容 `https://api.example.com`、`.../v1`、`.../chat/completions` 三种输入，自动补全为 `/v1/chat/completions`
+  - 连接测试端点是只读的（不调用 add/update/delete_model），失败测试不影响已保存的模型配置
+---
