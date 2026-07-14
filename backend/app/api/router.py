@@ -1,15 +1,16 @@
 """Aggregated API router.
 
-Module-specific routers will be mounted here as features land. For now we expose
-placeholder health routes so the OpenAPI docs render and the frontend can verify
-connectivity.
+Module-specific routers are mounted here as features land.
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter
 
+from app.api.models import router as models_router
+
 api_router = APIRouter()
+api_router.include_router(models_router)
 
 
 @api_router.get("/ping", tags=["system"])
