@@ -14,7 +14,10 @@ literal ``search`` path segment to the ``{id}`` parameter.
 
 from __future__ import annotations
 
+import mimetypes
+
 from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import FileResponse
 
 from app.schemas.conversation import (
     ConversationCreate,
@@ -22,6 +25,7 @@ from app.schemas.conversation import (
     ConversationRename,
     ConversationSummary,
 )
+from app.schemas.file_io import OutputFile
 from app.services.conversations_store import (
     create_conversation,
     delete_conversation,
@@ -30,6 +34,7 @@ from app.services.conversations_store import (
     rename_conversation,
     search_conversations,
 )
+from app.services.file_io_store import list_outputs, resolve_output_path
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -98,6 +103,38 @@ async def delete_conversation_endpoint(conversation_id: str) -> None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="会话不存在"
         )
+
+
+@router.get(
+    "/{conversation_id}/outputs",
+    response_model=list[OutputFile],
+)
+async def list_outputs_endpoint(conversation_id: str) -> list[OutputFile]:
+    """Return the files under the conversation's ``outputs/`` directory.
+
+    Returns an empty list when the conversation or its outputs directory does
+    not exist.
+    """
+    return [OutputFile.model_validate(f) for f in list_outputs(conversation_id)]
+
+
+@router.get("/{conversation_id}/outputs/{filename}")
+async def download_output_endpoint(
+    conversation_id: str, filename: str
+) -> FileResponse:
+    """Download or preview a single output file."""
+    path = resolve_output_path(conversation_id, filename)
+    if path is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="输出文件不存在",
+        )
+    media_type, _ = mimetypes.guess_type(path.name)
+    return FileResponse(
+        path=str(path),
+        filename=path.name,
+        media_type=media_type or "application/octet-stream",
+    )
 
 
 __all__ = ["router"]
