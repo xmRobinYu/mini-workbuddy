@@ -336,3 +336,34 @@
   - eval 中不能在同一 page context 重复 `const` 声明同名变量（Identifier already declared），需用 IIFE `(() => {...})()` 包裹隔离作用域。
   - 验证删除是否真正成功应以后端 search/get 返回为准；前端列表 React 异步渲染可能短暂陈旧，但 [role=alert] 是否常驻是判断有无前端报错的可靠信号。
 ---
+
+## 2026-07-15 01:40 - US-014
+- 实现了聊天前端消息区与 Markdown 渲染（`frontend/src/pages/ChatPage.tsx` + `frontend/src/index.css`），覆盖全部验收标准：
+  - 气泡样式：用户消息靠右（`justify-end` + `bg-warm-orange`），Agent 消息靠左（`justify-start` + `bg-warm-menu`）
+  - Agent 回复用 `react-markdown` + `remark-gfm` 渲染标题/列表/表格；用户消息纯文本 `whitespace-pre-wrap`
+  - 代码块用 `react-syntax-highlighter`（Prism + `oneLight` 主题）按 `language-xxx` 高亮，内联代码不走高亮器
+  - 输入框在下方 footer，带发送按钮；`onKeyDown` 显式不触发回车发送（回车换行），仅靠按钮提交
+  - 思考/回复中发送按钮禁用（`disabled={isThinking || ...}`），按钮在思考时显示旋转图标
+  - 发送后显示「正在思考...」三跳动点动画（`.thinking-dot` + `@keyframes thinking-bounce`，附 `prefers-reduced-motion` 降级）
+  - 新消息/思考态变化时自动滚动到底部（`messagesEndRef.scrollIntoView`）
+- 范围说明：真正的 SSE 流式回复端点 `POST /api/chat/send` 属于 US-016/US-017，本 story 用本地 `setTimeout(1200)` + 演示性 Markdown 回复模拟思考态，UI 状态机（inputText/isThinking）已就绪，待 SSE 落地后替换延迟模拟即可
+- 更改的文件：frontend/src/pages/ChatPage.tsx、frontend/src/index.css
+- 质量检查：`npm run typecheck` 通过（0 errors）、`npm run lint` 通过（0 warnings）、`npm run build` 成功（dist ~1010KB JS）
+- 浏览器验证（agent-browser）：http://localhost:5181/chat 选中会话后输入「请帮我总结会议纪要」点发送——用户气泡靠右、思考动画显示（`.thinking-dot` visible，发送按钮 disabled）；1.2s 后 Agent 气泡靠左出现，含 h2 标题/ul 列表/table 表格/pre 代码块（`def greet`），思考动画消失；清空后发送按钮 disabled，再输入文字按钮重新 enabled。验证通过
+- **未来迭代的学习：**
+  - `react-markdown` v9 的 `components.code` 接收 `className`（含 `language-xxx`）与 `children`；判断 `match = /language-(\w+)/.exec(className)` 区分块级代码与内联代码，块级用 `SyntaxHighlighter`，内联回退普通 `<code>`
+  - Markdown 排版样式统一挂在 `.chat-bubble` 作用域下（`index.css`），避免污染全局；首尾子元素 margin 归零防溢出
+  - 跳动点动画用三个 `<span className="thinking-dot">` + `animationDelay` 错峰 0.15s/0.3s，比单一点更直观；务必加 `@media (prefers-reduced-motion: reduce) { animation: none }`
+  - 本机前端 dev server 复用已运行的 5181 端口（前序 story 启动，仍在运行），后端 8000 复用；启动新 server 前先 `ss -ltn` 找空闲端口
+  - agent-browser 在该 Linux 环境需 `--args "--no-sandbox"`；若 daemon 已运行需先 `agent-browser close` 再带参数重启，否则 `--args` 被忽略
+  - snapshot 的 element ref 在每次快照后会变（同一元素新 ref），连续操作要在最新 snapshot 里取 ref
+---
+
+## 2026-07-15 02:10 - US-014
+- 复核已提交的聊天前端消息区与 Markdown 渲染实现（commit `a4065d4`）；work package 无 Validator 失败备注（notes 为空），无需修改源代码。
+- 更改的文件：scripts/ralph/progress.txt（追加复核记录）
+- 质量检查：`npm run typecheck` 通过（0 errors）、`npm run lint` 通过（0 warnings）
+- **未来迭代的学习：**
+  - RALPH_STORY_ID 指向已实现提交、passes=false 且 notes 为空的 story 时，属 develop_and_validate 模式的 develop 阶段完成、等待 Validator；此时只复跑质量检查确认绿色，不重新实现、不提前置 passes=true
+  - US-014 范围仅前端 UI（气泡/Markdown/思考动画），真正的 SSE 流式端点 POST /api/chat/send 属后续 story；本地 setTimeout 模拟思考态是有意为之的占位
+---
