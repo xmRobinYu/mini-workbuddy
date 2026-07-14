@@ -17,3 +17,17 @@ body {
   color: #1c1917;
   -webkit-font-smoothing: antialiased;
 }
+
+.form-input {
+  width: 100%;
+  border: 1px solid #e7e5e4;
+  border-radius: 6px;
+  padding: 0.5rem 0.625rem;
+  color: #1c1917;
+  outline: none;
+}
+
+.form-input:focus {
+  border-color: #ea580c;
+  box-shadow: 0 0 0 2px #ffedd5;
+}
