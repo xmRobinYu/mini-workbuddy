@@ -202,3 +202,22 @@
   - 后端 US-007 已提供 GET /api/tools（返回 BuiltinTool 列表）与 PUT /api/tools/{name}/toggle（body {enabled:bool} 返回 {name,enabled}），前端直接复用 `apiGet/apiPut`，无需新建路由
   - 本机 5181 端口已有本项目前端 dev server 在跑（Vite proxy /api → :8000），浏览器验证直接复用，不要重复启动
 ---
+
+## 2026-07-14 21:22 - US-009
+- 实现了 Agent 管理后端 CRUD API 与 agent.md 文件管理
+  - `backend/app/schemas/agent.py`：Pydantic schemas（AgentCreate/AgentUpdate/AgentRead/AgentMarkdownContent），字段 id/name/description/is_default/model_id/tools/skills/agent_md_path/created_at/updated_at；`validate_tool_names()` 校验 tools 必须是内置工具名（复用 `BUILTIN_TOOL_NAMES`）并去重
+  - `backend/app/services/agents_store.py`：agents.json 文件 CRUD（filelock），每个 Agent 拥有 `workspace/config/agents/{agent_id}/` 目录 + 种子 agent.md；`ensure_default_agent()` 启动时种入"主 Agent"（id=main, is_default=true，内置全部工具）；DELETE 同时 `shutil.rmtree` 清理目录；`reset_for_test()` 清空 agents.json + agents/ 目录
+  - `backend/app/api/agents.py`：FastAPI router（prefix=/agents），GET 列表 / POST 创建 / GET {id} / PUT {id} / DELETE {id}（主 Agent 不可删返回 400）/ GET {id}/agent-md / PUT {id}/agent-md
+  - `backend/app/api/router.py`：挂载 agents_router
+  - `backend/app/core/workspace.py`：`ensure_workspace()` 末尾调用 `ensure_default_agent()` 种入主 Agent
+  - `backend/tests/test_agents_api.py`：18 个测试覆盖全部验收标准（列表+主 Agent 种子、记录字段形状、创建自动生成 agent.md 文件、未知工具 400、GET 详情、PUT 修改字段+保留 is_default/agent_md_path、DELETE 删目录、DELETE 主 Agent 400、agent.md GET/PUT、404 用例、启动持久化到 agents.json）
+- 更改的文件：backend/app/schemas/agent.py、backend/app/services/agents_store.py、backend/app/api/agents.py、backend/app/api/router.py、backend/app/core/workspace.py、backend/tests/test_agents_api.py
+- 质量检查：`uv run pytest` 83 passed（含 18 个 agents + 原 65 个）；`uv run mypy app tests` Success: no issues found in 31 source files
+- **未来迭代的学习：**
+  - `AGENTS_FILE` 常量定义在 `app/services/agents_store.py`（不在 `app/core/config.py`），测试需从 service 模块导入；config.py 只放目录常量（AGENTS_CONFIG_DIR），文件常量由各 store 模块自管
+  - Agent 目录与 agent.md 在 `add_agent()` 内原子创建（`_create_agent_md`），record 的 `agent_md_path` 字段在写入 json 时回填，POST body 中先占位空串
+  - 启动种入主 Agent 走 `ensure_workspace()` → `ensure_default_agent()`，带 filelock 双重检查防并发重复种入；测试用 `with TestClient(create_app()) as client:` 触发 lifespan 跑种子逻辑
+  - 默认 Agent id 固定为 `"main"`（非 uuid），便于幂等检测与前端引用；非默认 Agent 用 `generate_id()`（uuid4）
+  - PUT 更新时 `is_default` 与 `agent_md_path` 不可变，`update_agent()` 内显式重断言这两个字段，避免被 payload 覆盖
+  - tools 字段校验复用 schema 层 `validate_tool_names()`，未知工具返回 400（非 422），保持与业务语义一致
+---
