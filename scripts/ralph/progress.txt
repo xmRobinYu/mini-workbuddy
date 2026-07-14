@@ -367,3 +367,24 @@
   - RALPH_STORY_ID 指向已实现提交、passes=false 且 notes 为空的 story 时，属 develop_and_validate 模式的 develop 阶段完成、等待 Validator；此时只复跑质量检查确认绿色，不重新实现、不提前置 passes=true
   - US-014 范围仅前端 UI（气泡/Markdown/思考动画），真正的 SSE 流式端点 POST /api/chat/send 属后续 story；本地 setTimeout 模拟思考态是有意为之的占位
 ---
+
+## 2026-07-15 07:15 - US-015
+- 复核已提交的文件上传与输出文件面板前端实现（commit `2a0c4cf`）；work package 无 Validator 失败备注（notes 为空），无需修改源代码。
+  - `frontend/src/lib/api.ts`：新增 `apiUpload<T>`（multipart/form-data 上传，不覆盖 Content-Type，处理 201/204/空 body/JSON/413）
+  - `frontend/src/pages/ChatPage.tsx`：聊天输入框文件上传按钮（5MB 前端预校验 + 后端 413 兜底）、待上传文件预览条、右侧输出文件面板（文件名/大小/修改时间列表、文本类文件可预览、所有文件可下载、空目录显示「暂无输出文件」、5s 轮询自动刷新）
+- 更改的文件：scripts/ralph/progress.txt（追加复核记录）
+- 质量检查：`npm run typecheck` 通过（0 errors）、`npm run lint` 通过（0 warnings）、`npm run build` 成功（dist ~1019KB JS）
+- 浏览器验证（agent-browser @ http://localhost:5181/chat，复用已在运行的 Vite dev server + 后端 :8000）：
+  - 选中「US015-verify」会话 → 右侧输出文件面板列出 report.md（73 B）、result.txt（18 B），含文件名/大小/修改时间
+  - 点击 report.md「预览」→ 弹窗显示 Markdown 文本内容（# 输出报告 / 项目 A/B），点击「关闭预览」关闭
+  - 上传 /tmp/us015-test.txt（30 B）→ 待上传预览条显示文件名+大小+「上传」按钮 → 点击上传成功（后端返回 201）
+  - 上传 6MB /tmp/big.bin → 前端预校验直接显示红色 alert「文件过大：6.0 MB，单文件上限 5 MB」（不发请求）；后端直连验证返回 413 `文件过大：单文件上限 5242880 字节`
+  - 切换到「损坏测试」会话（outputs 为空）→ 面板显示「暂无输出文件」
+  - 验证通过，全部 8 条验收标准满足
+- **未来迭代的学习：**
+  - agent-browser 文件上传命令：`agent-browser upload '<selector>' <file1> <file2>...`，selector 用 `'input[type=file]'`；hidden input 同样可定位
+  - agent-browser `upload` 不会自动提交表单，只填充文件选择；需随后点击页面的「上传」按钮触发后端请求
+  - 前端 5MB 校验是 `handleFileSelect` 中 `file.size > MAX_UPLOAD_BYTES` 预校验（不发请求），后端 `MAX_UPLOAD_BYTES` 413 兜底；双重防护，验收「超过 5MB 显示错误提示」两端都覆盖
+  - 验证完毕需清理 workspace/conversations/<id>/uploads/ 下的测试上传文件（workspace 被 gitignore，不影响提交，但避免污染运行态）
+  - 本机 5173 端口被另一个无关项目（tiger admin 登录页）占用；本项目前端 dev server 实际在 5181，浏览器验证用 5181
+---
