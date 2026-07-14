@@ -15,6 +15,9 @@
 - 后端业务逻辑分三层：`app/schemas/`（Pydantic 校验）、`app/services/`（业务+持久化）、`app/api/`（路由编排）
 - 文件持久化用 `filelock.FileLock` 包裹读写，锁文件放同目录 `<name>.json.lock`；workspace/ 被 gitignore
 - keyring 密钥链可用性判断：`getattr(backend, "name", "")` 含 "fail"/"null" 即不可用，降级到 env 引用；测试用 `keyring.set_keyring(MemoryKeyring())` 注入内存 backend
+- 内置工具集固定为 `read_file`/`write_file`/`execute_command` 三元组（不可增删），启用状态存 `workspace/config/tools.json`，缺失默认 enabled=True；安全拦截统一抛 `SecurityBlockedError`（reason 字段回传给 Agent）
+- 路径安全统一用 `app/core/path_security.py` 的 `is_safe_workspace_path`（`..` 拒绝 + 符号链接逃逸检测 + workspace 前缀校验）；工具函数中相对路径需先锚定到 `WORKSPACE_DIR` 再校验
+- `execute_command` 安全护栏：黑名单子串匹配(大小写不敏感)、`subprocess.run(timeout=60)` 自动 SIGKILL、working_dir 限定 workspace/、输出截断 100KB、`_strip_sensitive_env` 剥离 `OPENAI_API_KEY`/`MINI_WORKBUDDY_*`/`*_TOKEN` 等敏感环境变量
 
 ---
 
@@ -155,4 +158,29 @@
   - 测试中创建符号链接会真实写入文件系统，不要在真实 workspace/ 下做；用 monkeypatch 替换 `app.core.path_security.WORKSPACE_DIR` 指向 tmp_path 隔离（函数内每次从 WORKSPACE_DIR.resolve() 取根，patch 常量即可生效）
   - pytest fixture 名为 `ws` 时会被同签名测试参数自动注入；autouse + 命名 fixture 二选一，这里用命名 fixture 更直观
   - 后端开发环境无 uv/项目 venv 时可用系统 `python3 -m pytest` 与 `python3 -m mypy app`（fastapi/httpx/keyring 等已系统装好），结果与 uv run 等价
+---
+
+## 2026-07-14 20:35 - US-007
+- 实现了工具管理后端 API（GET /api/tools、PUT /api/tools/{name}/toggle）与三个内置工具函数（read_file/write_file/execute_command）及全部安全限制
+  - `backend/app/schemas/tool.py`：BuiltinTool/ToolToggleRequest/ToolToggleResponse schemas，BUILTIN_TOOL_NAMES 固定三元组，SecurityBlockedError 安全拦截异常
+  - `backend/app/services/tools_store.py`：tools.json 持久化（filelock），种子默认三个工具全部 enabled；load_command_blocklist() 读取 command_blocklist.json；reset_for_test 测试辅助
+  - `backend/app/services/tool_functions.py`：三个工具函数实现
+    - read_file/write_file：复用 US-006 的 is_safe_workspace_path 做路径校验（拒绝 `..`/绝对越界/符号链接逃逸），相对路径锚定 workspace/
+    - write_file：单次写入 10MB 限制（WRITE_MAX_BYTES）
+    - execute_command：命令黑名单子串匹配（大小写不敏感）→ 60s 超时 SIGKILL（subprocess.run timeout）→ working_dir 限定 workspace/ → 输出截断 100KB（OUTPUT_MAX_BYTES）→ _strip_sensitive_env 剥离 OPENAI_API_KEY/MINI_WORKBUDDY_*/*_TOKEN 等敏感环境变量
+  - `backend/app/api/tools.py`：router(prefix=/tools)，GET 列表、PUT toggle；未知工具 404，无 POST/DELETE（固定工具集不可增删）
+  - `backend/app/api/router.py`：挂载 tools_router
+  - `backend/app/core/config.py`：新增 TOOLS_FILE 常量
+  - `backend/tests/test_tools_api.py`：6 个 API 测试（列表三工具、toggle 启禁用、未知工具 404、缺 body 422、无 POST/DELETE、持久化）
+  - `backend/tests/test_tool_functions.py`：18 个工具函数测试覆盖全部安全验收点（路径校验、符号链接逃逸、10MB 限制、黑名单拦截大小写、60s 超时终止、working_dir 越界、100KB 输出截断、敏感环境变量剥离、真实 blocklist 文件读取）
+- 更改的文件：backend/app/schemas/tool.py、backend/app/services/tools_store.py、backend/app/services/tool_functions.py、backend/app/api/tools.py、backend/app/api/router.py、backend/app/core/config.py、backend/tests/test_tools_api.py、backend/tests/test_tool_functions.py
+- 质量检查：pytest 65 passed（含原 41 + 24 新增）；mypy Success: no issues found in 20 source files
+- **未来迭代的学习：**
+  - 内置工具集是固定的三元组（read_file/write_file/execute_command），不可增删；tools.json 只存 enabled 状态，缺失默认 True
+  - 安全拦截统一用 `SecurityBlockedError`（在 schemas/tool.py），Agent Loop 应捕获并把 reason 作为安全拦截消息返回给 Agent，不执行工具
+  - 路径校验必须复用 US-006 的 `is_safe_workspace_path`（在 app/core/path_security.py），不要重复实现；工具函数里相对路径需先锚定到 WORKSPACE_DIR 再校验
+  - execute_command 用 `subprocess.run(shell=True, capture_output=True, text=True, timeout=60, env=clean_env)`；TimeoutExpired 触发后子进程已被 subprocess 自动 kill，无需手动管理
+  - 敏感环境变量剥离：匹配 key.upper() in 显式列表（OPENAI_API_KEY 等）或 startswith/endswith 前缀（MINI_WORKBUDDY_、_API_KEY、_TOKEN、_SECRET），保留 SAFE_VAR 等普通变量
+  - FastAPI 对未定义的 DELETE /api/tools/{name} 返回 404（路径未匹配），对 POST /api/tools（路径匹配但方法不支持）返回 405；测试断言要注意区分
+  - 工具函数测试用 monkeypatch 把 WORKSPACE_DIR 指向 tmp_path，同时 patch `app.core.config`、`app.core.path_security`、`app.services.tool_functions` 三处的 WORKSPACE_DIR 引用（path_security 在调用时重新 resolve，但 config 被工具函数直接引用）
 ---
