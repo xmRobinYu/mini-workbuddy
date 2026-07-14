@@ -221,3 +221,32 @@
   - PUT 更新时 `is_default` 与 `agent_md_path` 不可变，`update_agent()` 内显式重断言这两个字段，避免被 payload 覆盖
   - tools 字段校验复用 schema 层 `validate_tool_names()`，未知工具返回 400（非 422），保持与业务语义一致
 ---
+
+## 2026-07-14 21:55 - US-010
+- 实现了 Agent 管理前端列表页与详情编辑页
+  - `frontend/src/pages/AgentsPage.tsx`：Agent 列表页，卡片式布局，每个 Agent 仅展示名称 + 描述；点击名称（Link 路由到 `/agents/:id`）进入详情；列表页无编辑按钮；主 Agent 卡片底部标注「主 Agent（不可删除）」并置顶
+  - `frontend/src/pages/AgentDetailPage.tsx`：详情编辑页，四个 Tab（基本信息 / 系统提示词 / 工具配置 / 技能配置，`role=tablist`+`role=tab`+`aria-selected`）
+    - 基本信息：仅可编辑名称 + 描述；model_id 以 disabled 输入框只读展示（标注「模型与其他参数不可在此修改」）
+    - 系统提示词：展示并编辑 `agent.md` 内容，保存调用 PUT `/api/agents/{id}/agent-md`；dirty 状态控制保存按钮可用性
+    - 工具配置：列出内置工具（read_file/write_file/execute_command）带勾选框，排除记忆工具(save_memory/search_memory)与 delegate_task；保存调用 PUT `/api/agents/{id}` 携带 tools 数组
+    - 技能配置：当前 P0 无技能管理后端，展示「当前还没有已启用的技能」空状态；勾选逻辑就绪等待技能 API
+    - 删除按钮在详情页右上角，点击弹出二次确认；主 Agent 不渲染删除按钮
+  - `frontend/src/App.tsx`：新增 `/agents/:agentId` 路由挂载 AgentDetailPage
+- 更改的文件：frontend/src/pages/AgentsPage.tsx、frontend/src/pages/AgentDetailPage.tsx（新增）、frontend/src/App.tsx
+- 质量检查：`npm run typecheck` 通过；`npm run lint` 通过；`npm run build` 成功（dist 198KB JS）；后端 `uv run pytest` 83 passed、`uv run mypy app tests` 31 files clean
+- 浏览器验证（agent-browser @ http://localhost:5182）：
+  - 打开 /agents 列表，点击「主 Agent」进入 /agents/main
+  - 四个 Tab 可见（基本信息/系统提示词/工具配置/技能配置）
+  - 主 Agent 详情页无删除按钮（deleteBtnVisible=false）
+  - 基本信息栏编辑描述 → 保存 → 后端 GET /api/agents/main 确认持久化 → 刷新页面（重新 open /agents/main）描述仍在
+  - 工具配置栏：read_file/write_file/execute_command 三个勾选框，无 memory/delegate 工具
+  - 系统提示词栏：展示 agent.md 内容（`# 主 Agent ...`）
+  - 技能配置栏：展示空状态
+- **未来迭代的学习：**
+  - 前端列表页→详情页 pattern：列表页只放摘要字段（id/name/description/is_default），点击名称用 `<Link to="/agents/:id">` 跳转；详情页用 `useParams` 取 agentId + `useNavigate` 返回。删除按钮放详情页 header 右上角，主 Agent 通过 `agent.is_default` 不渲染。
+  - `PUT /api/agents/{id}` 是全量替换 editable 字段（name/description/model_id/tools/skills）——保存某一栏目时必须把其他栏目的当前值一起回传，否则会清空。详情页用单一 `agent` state 持有后端最新值，各栏目保存时基于它拼 payload。
+  - agent-browser `eval` 执行 JS 时，直接给 React 受控 `<textarea>` 赋 `value` 不会触发 React 的 onChange（state 不更新，保存的是旧值）。必须用原生 setter：`Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(ta, next)` + `dispatchEvent(new Event('input',{bubbles:true}))`。普通的 `<input>` 同理用 HTMLInputElement.prototype。这是验证受控组件时的关键陷阱。
+  - agent-browser 命令：`find <locator> <value> <action>`（如 `find text "主 Agent" click`）比 `click <sel>` 更可靠；`eval <js>` 可读 DOM 状态；`get url` 读当前 URL。无 `execute` 命令。
+  - 本机 5173/5174/5180/5181 端口已被其他项目占用，启动本项目前端 dev server 用 `--port 5182 --strictPort`；后端 8000 已在运行可直接复用，无需重启。
+  - 工具栏目的「排除项」前端硬编码 `HIDDEN_AGENT_TOOLS = {save_memory, search_memory, delegate_task}` + `BUILTIN_TOOL_DESCRIPTIONS` 映射（与后端 TOOL_DESCRIPTIONS 对齐），因为 P0 阶段后端 BUILTIN_TOOL_NAMES 仅三元组、尚无 save_memory/delegate_task 实现。
+---
