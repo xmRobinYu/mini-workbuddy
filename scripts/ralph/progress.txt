@@ -11,6 +11,10 @@
 - Vite dev server 配置了 `/api`、`/docs`、`/openapi.json` proxy 代理到后端 `http://localhost:8000`，开发联调无需关心 CORS
 - 暖色调主题定义在 `tailwind.config.js` 的 `colors.warm` 下（bg 白/menu 浅灰/orange 暖橙/amber 琥珀）
 - 前端布局：`src/components/Layout.tsx` 为左侧菜单 + 右侧内容区骨架，路由配置在 `src/App.tsx`，占位页面统一用 `src/pages/PlaceholderPage.tsx`
+- 新增后端 API 模块：在 `app/api/<feature>.py` 定义 `APIRouter(prefix="/<feature>")`，在 `app/api/router.py` 用 `api_router.include_router(...)` 挂载，自动获得 `/api/<feature>` 前缀
+- 后端业务逻辑分三层：`app/schemas/`（Pydantic 校验）、`app/services/`（业务+持久化）、`app/api/`（路由编排）
+- 文件持久化用 `filelock.FileLock` 包裹读写，锁文件放同目录 `<name>.json.lock`；workspace/ 被 gitignore
+- keyring 密钥链可用性判断：`getattr(backend, "name", "")` 含 "fail"/"null" 即不可用，降级到 env 引用；测试用 `keyring.set_keyring(MemoryKeyring())` 注入内存 backend
 
 ---
 
@@ -51,4 +55,24 @@
   - `tsconfig.node.json`（用于 vite.config.ts）需要 `"types": ["node"]` 和 `@types/node` 依赖，否则 `node:path` 和 `__dirname` 报错
   - Vite proxy 让前端开发无需直连后端端口，但验收标准要求的"CORS 生效"仍需后端 CORS 中间件配置正确（已在 US-001 完成）
   - Tailwind CSS 3 用 `@tailwind base/components/utilities` 指令；自定义颜色通过 `theme.extend.colors` 扩展，使用时为 `bg-warm-orange`、`text-warm-text-muted` 等
+---
+
+## 2026-07-14 16:35 - US-003
+- 实现了模型管理后端 CRUD API（GET/POST/PUT/DELETE /api/models）与 keyring 密钥链存储
+  - `backend/app/schemas/model.py`：Pydantic v2 schemas（ModelCreate/ModelUpdate/ModelRead），provider 枚举（deepseek/alibaba/custom），base_url 用 HttpUrl 校验，context_window_tokens 用 `gt=0` 正整数校验
+  - `backend/app/services/keyring_service.py`：OS 密钥链封装，`keychain://<id>` 引用格式；通过检测 backend name 含 "fail"/"null" 判断密钥链不可用，降级到 api_key_env；store/get/delete + ref_to_key_id 解析
+  - `backend/app/services/models_store.py`：models.json 文件 CRUD，用 filelock 加锁防并发损坏；list/get/add/update/delete + generate_id(uuid4) + reset_for_test
+  - `backend/app/api/models.py`：FastAPI router（prefix=/models），POST 存密钥到 keyring 后只写 api_key_ref 到 json；PUT 全量替换、省略 api_key 则保留原 ref；DELETE 同时清 keychain；keychain 不可用且无 api_key_env 返回 400
+  - `backend/app/api/router.py`：挂载 models_router
+  - `backend/tests/test_models_api.py`：13 个测试覆盖全部验收标准（CRUD、schema 字段、无明文密钥、keychain 实际存储、降级 env、404、422 校验、GET 读 models.json）
+- 更改的文件：backend/app/schemas/、backend/app/services/、backend/app/api/models.py、backend/app/api/router.py、backend/tests/test_models_api.py
+- 质量检查：mypy Success: no issues found in 16 source files；pytest 17 passed（含原 4 个 health 测试）
+- **未来迭代的学习：**
+  - 新增 API 模块的 pattern：在 `app/api/<feature>.py` 定义 `APIRouter(prefix="/<feature>")`，在 `app/api/router.py` 用 `api_router.include_router(...)` 挂载；路由自动获得 `/api/<feature>` 前缀（main.py 的 `prefix="/api"` + router 自身 prefix）
+  - keyring 在 CI/headless 环境下 backend 为 fail.Keyring，`set_password` 不报错但什么都不存；测试需 `keyring.set_keyring(_MemoryKeyring())` 注入内存 backend 才能断言密钥真的存了
+  - keyring backend 可用性判断：`getattr(backend, "name", "")` 含 "fail"/"null" 即不可用；生产代码据此降级到 api_key_env
+  - 文件持久化用 `filelock.FileLock` 包裹读写，锁文件放同目录 `<name>.json.lock`；workspace/ 被 gitignore，锁文件不会进 git
+  - Pydantic v2 的 HttpUrl 序列化后是 string，存 json 前要 `str(payload.base_url)`；ModelRead 用 `model_validate(dict)` 反校验存储数据
+  - 测试重置 workspace 文件直接 `MODELS_FILE.write_text("[]")`，比调 ensure_workspace 更干净；每个测试独立重置避免相互依赖
+  - 连接测试 API（POST /api/models/{id}/test）是后续 story（B-11），本 story 只做 CRUD + 密钥存储，不要提前实现
 ---
