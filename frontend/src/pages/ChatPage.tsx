@@ -6,8 +6,13 @@ import {
   Pencil,
   Plus,
   Search,
+  SendHorizontal,
   Trash2,
 } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import {
   apiDelete,
   apiGet,
@@ -53,6 +58,23 @@ function formatTime(iso: string): string {
   return `${mm}-${dd} ${hh}:${mi}`
 }
 
+/**
+ * Agent 思考时的「正在思考...」跳动点动画。
+ * 三个点依次延迟跳动，循环播放。
+ */
+function ThinkingIndicator() {
+  return (
+    <div className="flex items-center gap-1.5 rounded-warm bg-warm-menu px-3 py-2.5 text-sm text-warm-text-muted">
+      <span>正在思考</span>
+      <span className="flex items-end gap-0.5">
+        <span className="thinking-dot" />
+        <span className="thinking-dot" style={{ animationDelay: '0.15s' }} />
+        <span className="thinking-dot" style={{ animationDelay: '0.3s' }} />
+      </span>
+    </div>
+  )
+}
+
 export default function ChatPage() {
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
   const [isLoadingList, setIsLoadingList] = useState(true)
@@ -73,8 +95,14 @@ export default function ChatPage() {
   // 待删除确认的会话
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
+  // 输入框与发送状态
+  const [inputText, setInputText] = useState('')
+  // Agent 是否正在思考/回复中（发送按钮据此禁用）
+  const [isThinking, setIsThinking] = useState(false)
+
   const renameInputRef = useRef<HTMLInputElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const messagesEndRef = useRef<HTMLDivElement | null>(null)
 
   // ── 加载会话列表 ────────────────────────────────────────────────────────
   const loadConversations = async () => {
@@ -175,6 +203,11 @@ export default function ChatPage() {
     }
   }, [renamingId])
 
+  // 新消息或思考态变化时，滚动到底部
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [detail?.events.length, isThinking])
+
   // ── 新建会话 ────────────────────────────────────────────────────────────
   const handleCreate = async () => {
     setPageError('')
@@ -251,6 +284,61 @@ export default function ChatPage() {
   }
 
   const cancelDelete = () => setDeletingId(null)
+
+  // ── 发送消息 ──────────────────────────────────────────────────────────────
+  // US-014 范围：渲染消息区 + Markdown + 输入框 + 思考动画。
+  // 真正的 SSE 流式回复端点 POST /api/chat/send 属于 US-016/US-017，尚未实现。
+  // 这里在本地把用户消息追加到当前会话的事件列表，进入「正在思考...」态，
+  // 随后用一条演示性 Markdown 回复展示渲染效果。等 SSE 端点落地后，
+  // 将下面的延迟模拟替换为 fetch streaming / EventSource 即可，UI 状态机保持不变。
+  const handleSend = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const text = inputText.trim()
+    // 未选中会话、空输入、或正在思考时不可发送
+    if (!selectedId || !detail || !text || isThinking) return
+
+    const userEvent: ConversationEvent = {
+      role: 'user',
+      type: 'message',
+      data: { text },
+    }
+    setDetail({ ...detail, events: [...detail.events, userEvent] })
+    setInputText('')
+    setIsThinking(true)
+
+    const demoReply =
+      '好的，已为你整理会议纪要要点如下：\n\n' +
+      '## 会议纪要\n\n' +
+      '### 讨论议题\n\n' +
+      '- 产品 P0 范围与里程碑\n' +
+      '- 资源分配与风险评估\n\n' +
+      '### 关键结论\n\n' +
+      '| 事项 | 负责人 | 截止日期 |\n' +
+      '| --- | --- | --- |\n' +
+      '| 模型管理模块 | 张三 | 2026-07-20 |\n' +
+      '| Agent 管理模块 | 李四 | 2026-07-22 |\n\n' +
+      '### 示例代码\n\n' +
+      '```python\n' +
+      'def greet(name: str) -> str:\n' +
+      '    return f"你好，{name}！"\n' +
+      '```\n'
+
+    // 模拟 Agent 思考 + 回复延迟（演示用途；SSE 接入后替换为流式接收）
+    window.setTimeout(() => {
+      setDetail((prev) => {
+        if (!prev) return prev
+        const assistantEvent: ConversationEvent = {
+          role: 'assistant',
+          type: 'message',
+          data: { text: demoReply },
+        }
+        return { ...prev, events: [...prev.events, assistantEvent] }
+      })
+      setIsThinking(false)
+    }, 1200)
+  }
+
+  const hasConversation = Boolean(selectedId && detail)
 
   return (
     <div className="flex h-full">
@@ -427,14 +515,14 @@ export default function ChatPage() {
         </div>
       </aside>
 
-      {/* 右侧：对话内容还原区 */}
+      {/* 右侧：对话消息区 + 输入框 */}
       <section className="flex flex-1 flex-col bg-warm-bg">
         {isLoadingDetail ? (
           <div className="flex flex-1 items-center justify-center text-sm text-warm-text-muted">
             <LoaderCircle className="mr-2 animate-spin" size={18} />
             正在加载对话内容…
           </div>
-        ) : !selectedId || !detail ? (
+        ) : !hasConversation ? (
           <div className="flex flex-1 flex-col items-center justify-center text-center">
             <MessageSquare size={40} className="mb-3 text-warm-text-muted" />
             <p className="text-sm text-warm-text-muted">
@@ -445,17 +533,19 @@ export default function ChatPage() {
           <>
             <header className="flex h-14 flex-shrink-0 items-center border-b border-warm-border px-6">
               <h1 className="truncate text-base font-semibold text-warm-text">
-                {detail.title || '未命名会话'}
+                {detail?.title || '未命名会话'}
               </h1>
             </header>
+
+            {/* 消息列表区 */}
             <div className="flex-1 overflow-y-auto px-6 py-4">
-              {detail.events.length === 0 ? (
+              {detail && detail.events.length === 0 ? (
                 <div className="flex h-full items-center justify-center text-sm text-warm-text-muted">
                   暂无对话记录
                 </div>
               ) : (
                 <ul className="space-y-3">
-                  {detail.events.map((event, index) => {
+                  {detail?.events.map((event, index) => {
                     const isUser = event.role === 'user'
                     const text = event.data?.text ?? ''
                     return (
@@ -466,20 +556,110 @@ export default function ChatPage() {
                         }`}
                       >
                         <div
-                          className={`max-w-[80%] whitespace-pre-wrap rounded-warm px-3 py-2 text-sm ${
+                          className={`chat-bubble max-w-[80%] rounded-warm px-3 py-2 text-sm ${
                             isUser
                               ? 'bg-warm-orange text-white'
                               : 'bg-warm-menu text-warm-text'
                           }`}
                         >
-                          {text || `（${event.type || event.role || '事件'}）`}
+                          {/* 用户消息纯文本展示；Agent 消息用 Markdown 渲染 */}
+                          {isUser ? (
+                            <span className="whitespace-pre-wrap">
+                              {text || `（${event.type || event.role || '事件'}）`}
+                            </span>
+                          ) : (
+                            <ReactMarkdown
+                              remarkPlugins={[remarkGfm]}
+                              components={{
+                                code({ className, children, ...props }) {
+                                  // 提取语言标识，内联代码不使用高亮器
+                                  const match = /language-(\w+)/.exec(
+                                    className || '',
+                                  )
+                                  const codeText = String(children).replace(
+                                    /\n$/,
+                                    '',
+                                  )
+                                  if (match) {
+                                    return (
+                                      <SyntaxHighlighter
+                                        language={match[1]}
+                                        style={oneLight}
+                                        PreTag="div"
+                                        customStyle={{
+                                          margin: 0,
+                                          background: '#f5f5f4',
+                                          fontSize: '0.8rem',
+                                        }}
+                                      >
+                                        {codeText}
+                                      </SyntaxHighlighter>
+                                    )
+                                  }
+                                  return (
+                                    <code className={className} {...props}>
+                                      {children}
+                                    </code>
+                                  )
+                                },
+                              }}
+                            >
+                              {text || `（${event.type || event.role || '事件'}）`}
+                            </ReactMarkdown>
+                          )}
                         </div>
                       </li>
                     )
                   })}
+                  {/* 思考态：在消息流末尾显示「正在思考...」跳动点动画 */}
+                  {isThinking && (
+                    <li className="flex justify-start">
+                      <ThinkingIndicator />
+                    </li>
+                  )}
                 </ul>
               )}
+              <div ref={messagesEndRef} />
             </div>
+
+            {/* 输入框区：在下方，有发送按钮，不支持回车发送 */}
+            <footer className="flex-shrink-0 border-t border-warm-border px-6 py-3">
+              <form
+                onSubmit={(e) => void handleSend(e)}
+                className="flex items-end gap-2"
+              >
+                <textarea
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  onKeyDown={(e) => {
+                    // 明确不支持回车发送：回车换行，提交只能点发送按钮
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      // 允许默认换行行为，不触发发送
+                    }
+                  }}
+                  rows={2}
+                  placeholder={
+                    hasConversation
+                      ? '输入消息，点击发送按钮发送（回车换行）…'
+                      : '请先选择或新建会话'
+                  }
+                  disabled={!hasConversation}
+                  className="min-h-[2.5rem] flex-1 resize-none rounded-warm border border-warm-border bg-white px-3 py-2 text-sm text-warm-text placeholder:text-warm-text-muted focus:border-warm-orange focus:outline-none disabled:bg-warm-menu disabled:text-warm-text-muted"
+                />
+                <button
+                  type="submit"
+                  disabled={!hasConversation || isThinking || !inputText.trim()}
+                  aria-label="发送消息"
+                  className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-warm bg-warm-orange text-white transition-colors hover:bg-warm-orange/90 disabled:cursor-not-allowed disabled:bg-warm-border disabled:text-warm-text-muted"
+                >
+                  {isThinking ? (
+                    <LoaderCircle size={18} className="animate-spin" />
+                  ) : (
+                    <SendHorizontal size={18} />
+                  )}
+                </button>
+              </form>
+            </footer>
           </>
         )}
       </section>
