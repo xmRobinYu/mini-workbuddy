@@ -31,10 +31,19 @@ export async function apiRequest<T>(
     throw new Error(`请求失败 ${response.status}: ${text}`)
   }
 
-  // 部分端点无返回体
- const contentType = response.headers.get('content-type')
+  // 204 No Content 或空响应体：跳过 JSON 解析，直接返回 undefined
+  if (response.status === 204) {
+    return undefined as unknown as T
+  }
+
+  const contentType = response.headers.get('content-type')
   if (contentType && contentType.includes('application/json')) {
-    return response.json() as Promise<T>
+    // 即使 content-type 声明为 JSON，响应体可能为空（部分后端 204 仍带该 header）
+    const text = await response.text()
+    if (text.length === 0) {
+      return undefined as unknown as T
+    }
+    return JSON.parse(text) as T
   }
   return undefined as unknown as T
 }
