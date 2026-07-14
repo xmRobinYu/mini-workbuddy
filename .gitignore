@@ -18,3 +18,5 @@ dist/
 
 # Workspace (runtime data)
 workspace/
+scripts/ralph/prd.runtime.json
+screenshots/
