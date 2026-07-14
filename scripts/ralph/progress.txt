@@ -1,0 +1,27 @@
+## Codebase Patterns
+- 后端使用 `uv` 管理依赖，开发命令 `cd backend && uv sync --extra dev`；启动 `uv run uvicorn app.main:app --reload --port 8000`
+- 后端路径解析基于 `app/core/config.py` 中的 `PROJECT_ROOT`（`Path(__file__).resolve().parents[3]`），所有 workspace 路径常量集中在此
+- workspace 目录在运行时通过 `app/core/workspace.py` 的 `ensure_workspace()` 自初始化（lifespan 事件触发），无需手工创建或提交 runtime 文件
+- FastAPI 使用 application factory 模式 `create_app()`，便于 TestClient 测试
+- CORS 白名单为 `http://localhost:5173`（前端 Vite 默认端口）
+- 根 `.gitignore` 忽略整个 `workspace/`，workspace 内的 `.gitignore` 由 `ensure_workspace()` 在运行时生成
+
+---
+
+## 2026-07-14 15:45 - US-001
+- 实现了后端 FastAPI 项目脚手架与 workspace 数据目录自初始化
+  - `backend/pyproject.toml`：uv 管理依赖（fastapi, uvicorn, httpx, pydantic, python-multipart, tiktoken, filelock, keyring, aiofiles, python-dateutil）+ dev 依赖（pytest, pytest-asyncio, mypy）
+  - `backend/app/main.py`：FastAPI application factory，CORS 中间件（localhost:5173），lifespan 触发 workspace 初始化，`/health` + `/api/ping` 路由
+  - `backend/app/core/config.py`：项目路径常量（PROJECT_ROOT、WORKSPACE_DIR、CONFIG_DIR 等）+ CORS_ORIGINS
+  - `backend/app/core/workspace.py`：`ensure_workspace()` 创建 workspace 目录树 + 种子文件（models.json 空数组、command_blocklist.json 9 条黑名单、workspace/.gitignore）
+  - `backend/app/api/router.py`：聚合 API 路由骨架
+  - `backend/tests/test_health.py`：4 个冒烟测试（/health、/docs、/api/ping、CORS header）
+  - `backend/README.md`：开发说明
+- 更改的文件：backend/（新增整个目录）、scripts/ralph/progress.txt（新建）
+- 质量检查：pytest 4 passed，mypy Success: no issues found in 7 source files，uvicorn 启动后 /docs 返回 200、/health 返回 {"status":"ok"}
+- **未来迭代的学习：**
+  - 后端入口是 `app.main:app`（application factory `create_app()`），测试用 `TestClient(create_app())`
+  - workspace 是运行时自初始化的，不要手工创建或提交 workspace/ 下的文件；新增配置文件应加入 `ensure_workspace()` 的种子逻辑
+  - 后端 venv 在 `backend/.venv`，直接调用 `.venv/bin/uvicorn` 或 `.venv/bin/python` 比 `uv run` 在某些后台场景更可靠
+  - nohup + uv run 后台启动 uvicorn 会在 exec_command 调用返回时被 kill；如需后台 dev server，用 `&` + sleep + curl + kill 的单条命令模式验证
+---
