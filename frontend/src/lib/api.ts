@@ -67,3 +67,47 @@ export const apiPut = <T>(path: string, body?: unknown, options?: RequestOptions
 
 export const apiDelete = <T>(path: string, options?: RequestOptions) =>
   apiRequest<T>(path, { ...options, method: 'DELETE' })
+
+/**
+ * 文件上传（multipart/form-data）。body 为 FormData 时由浏览器自动设置
+ * Content-Type 与 boundary，因此这里不覆盖 headers 中的 Content-Type。
+ * 后端 POST /api/chat/upload 成功返回 201 + JSON，超限返回 413。
+ */
+export async function apiUpload<T>(
+  path: string,
+  body: FormData,
+  options?: RequestOptions,
+): Promise<T> {
+  const { baseURL = BASE_URL, ...init } = options || {}
+  const url = `${baseURL}${path}`
+  const response = await fetch(url, {
+    ...init,
+    method: 'POST',
+    body,
+  })
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '')
+    let message = `请求失败 ${response.status}`
+    try {
+      const parsed = JSON.parse(text)
+      if (parsed?.detail) message = parsed.detail
+    } catch {
+      if (text) message = `请求失败 ${response.status}: ${text}`
+    }
+    throw new Error(message)
+  }
+
+  if (response.status === 204) {
+    return undefined as unknown as T
+  }
+  const text = await response.text()
+  if (text.length === 0) {
+    return undefined as unknown as T
+  }
+  const contentType = response.headers.get('content-type')
+  if (contentType && contentType.includes('application/json')) {
+    return JSON.parse(text) as T
+  }
+  return undefined as unknown as T
+}

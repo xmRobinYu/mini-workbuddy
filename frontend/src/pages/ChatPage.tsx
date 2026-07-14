@@ -1,5 +1,8 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Download,
+  Eye,
+  FileText,
   LoaderCircle,
   MessageSquare,
   MoreVertical,
@@ -8,6 +11,8 @@ import {
   Search,
   SendHorizontal,
   Trash2,
+  Upload,
+  X,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -18,6 +23,7 @@ import {
   apiGet,
   apiPost,
   apiPut,
+  apiUpload,
 } from '@/lib/api'
 
 // 会话摘要（与后端 ConversationSummary 对齐）
@@ -39,6 +45,48 @@ interface ConversationEvent {
 // 会话详情（GET /api/conversations/{id}）
 interface ConversationDetail extends ConversationSummary {
   events: ConversationEvent[]
+}
+
+// 输出文件（GET /api/conversations/{id}/outputs，与后端 OutputFile 对齐）
+interface OutputFile {
+  filename: string
+  size: number
+  modified_at: string
+}
+
+// 上传文件响应（POST /api/chat/upload，与后端 UploadedFile 对齐）
+interface UploadedFile {
+  filename: string
+  stored_filename: string
+  size: number
+  path: string
+  content_type: string
+}
+
+// 单文件上传上限：5MB（与后端 MAX_UPLOAD_BYTES 对齐）
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
+/** 判断文件名扩展名是否属于可在面板内直接预览的文本类文件。 */
+const TEXT_PREVIEW_EXTENSIONS = new Set([
+  'txt', 'md', 'markdown', 'json', 'yaml', 'yml', 'csv', 'tsv', 'log',
+  'js', 'jsx', 'ts', 'tsx', 'py', 'rb', 'go', 'rs', 'java', 'c', 'h',
+  'cpp', 'hpp', 'css', 'scss', 'html', 'htm', 'xml', 'sh', 'bash', 'sql',
+  'ini', 'toml', 'conf', 'env', 'gitignore', 'dockerfile',
+])
+
+function isTextFile(filename: string): boolean {
+  const lower = filename.toLowerCase()
+  if (lower === 'dockerfile' || lower.endsWith('.dockerfile')) return true
+  const dot = lower.lastIndexOf('.')
+  if (dot < 0) return false
+  return TEXT_PREVIEW_EXTENSIONS.has(lower.slice(dot + 1))
+}
+
+/** 人类可读的文件大小展示。 */
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function errorMessage(error: unknown) {
@@ -75,6 +123,70 @@ function ThinkingIndicator() {
   )
 }
 
+/**
+ * 输出文件文本预览：fetch 文件内容并以纯文本展示。
+ * 大文件只展示前 200KB 内容，避免浏览器卡顿。
+ */
+const PREVIEW_MAX_BYTES = 200 * 1024
+
+function TextFilePreview({
+  url,
+  onError,
+}: {
+  url: string
+  onError: (message: string) => void
+}) {
+  const [content, setContent] = useState<string>('')
+  const [isLoading, setIsLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setIsLoading(true)
+    fetch(url)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`请求失败 ${res.status}`)
+        const text = await res.text()
+        return text
+      })
+      .then((text) => {
+        if (cancelled) return
+        if (text.length > PREVIEW_MAX_BYTES) {
+          setContent(
+            text.slice(0, PREVIEW_MAX_BYTES) +
+              `\n\n…（文件较大，仅显示前 ${PREVIEW_MAX_BYTES} 字符）`,
+          )
+        } else {
+          setContent(text)
+        }
+        setIsLoading(false)
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return
+        onError(
+          error instanceof Error ? error.message : '预览加载失败，请稍后重试',
+        )
+        setIsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [url, onError])
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-10 text-sm text-warm-text-muted">
+        <LoaderCircle className="mr-2 animate-spin" size={16} />
+        正在加载预览…
+      </div>
+    )
+  }
+  return (
+    <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-warm-text">
+      {content}
+    </pre>
+  )
+}
+
 export default function ChatPage() {
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
   const [isLoadingList, setIsLoadingList] = useState(true)
@@ -99,6 +211,20 @@ export default function ChatPage() {
   const [inputText, setInputText] = useState('')
   // Agent 是否正在思考/回复中（发送按钮据此禁用）
   const [isThinking, setIsThinking] = useState(false)
+
+  // 文件上传：待上传的文件（聊天输入框附件）、上传状态与错误提示
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadError, setUploadError] = useState('')
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  // 右侧输出文件面板：当前会话 outputs 文件列表、预览状态
+  const [outputFiles, setOutputFiles] = useState<OutputFile[]>([])
+  const [isLoadingOutputs, setIsLoadingOutputs] = useState(false)
+  const [previewFile, setPreviewFile] = useState<{
+    name: string
+    url: string
+  } | null>(null)
 
   const renameInputRef = useRef<HTMLInputElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
@@ -181,6 +307,42 @@ export default function ChatPage() {
     } else {
       setDetail(null)
     }
+  }, [selectedId])
+
+  // ── 输出文件面板 ──────────────────────────────────────────────────────────
+  const loadOutputs = async (id: string) => {
+    setIsLoadingOutputs(true)
+    try {
+      const data = await apiGet<OutputFile[]>(`/conversations/${id}/outputs`)
+      setOutputFiles(data)
+    } catch (error) {
+      // 列表加载失败不清空已有数据，仅静默（错误已在页面顶部 alert 展示）
+      setOutputFiles([])
+      setPageError(errorMessage(error))
+    } finally {
+      setIsLoadingOutputs(false)
+    }
+  }
+
+  // 选中会话时加载输出文件列表；切换/清空会话时重置预览与列表
+  useEffect(() => {
+    setPreviewFile(null)
+    if (selectedId) {
+      void loadOutputs(selectedId)
+    } else {
+      setOutputFiles([])
+    }
+    // 仅依赖 selectedId：loadOutputs 在切换会话时重新拉取
+  }, [selectedId])
+
+  // Agent 新增文件到 outputs 时自动刷新：每 5s 轮询当前会话的输出列表。
+  // 轮询是 P0 阶段 SSE 事件驱动尚未落地前的稳妥兜底（Agent Loop 写入 outputs 后刷新）。
+  useEffect(() => {
+    if (!selectedId) return
+    const handle = window.setInterval(() => {
+      void loadOutputs(selectedId)
+    }, 5000)
+    return () => window.clearInterval(handle)
   }, [selectedId])
 
   // 点击页面其他位置时关闭操作菜单
@@ -284,6 +446,67 @@ export default function ChatPage() {
   }
 
   const cancelDelete = () => setDeletingId(null)
+
+  // ── 文件上传 ──────────────────────────────────────────────────────────────
+  // 选择文件时先做前端预校验：超过 5MB 直接给出错误提示，不发请求。
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setUploadError('')
+    const file = event.target.files?.[0]
+    // 重置 input 的 value，便于重复选择同一文件
+    event.target.value = ''
+    if (!file) return
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setUploadError(
+        `文件过大：${formatSize(file.size)}，单文件上限 5 MB`,
+      )
+      return
+    }
+    setPendingFile(file)
+  }
+
+  const clearPendingFile = () => {
+    setPendingFile(null)
+    setUploadError('')
+  }
+
+  // 真正上传文件到后端 POST /api/chat/upload（携带当前会话 id）
+  const handleUpload = async () => {
+    if (!pendingFile || !selectedId || isUploading) return
+    setIsUploading(true)
+    setUploadError('')
+    try {
+      const form = new FormData()
+      form.append('file', pendingFile)
+      form.append('conversation_id', selectedId)
+      await apiUpload<UploadedFile>('/chat/upload', form)
+      setPendingFile(null)
+      // 上传成功后刷新输出文件列表（uploads 与 outputs 同目录树，便于即时反馈）
+      await loadOutputs(selectedId)
+    } catch (error) {
+      setUploadError(errorMessage(error))
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  // 打开文本类输出文件的内联预览（直接 GET /api/conversations/{id}/outputs/{filename}）
+  const openPreview = (file: OutputFile) => {
+    if (!selectedId) return
+    const url = `/api/conversations/${selectedId}/outputs/${encodeURIComponent(file.filename)}`
+    setPreviewFile({ name: file.filename, url })
+  }
+
+  // 下载任意输出文件（由浏览器原生 download 行为触发）
+  const downloadOutput = (file: OutputFile) => {
+    if (!selectedId) return
+    const url = `/api/conversations/${selectedId}/outputs/${encodeURIComponent(file.filename)}`
+    const a = document.createElement('a')
+    a.href = url
+    a.download = file.filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  }
 
   // ── 发送消息 ──────────────────────────────────────────────────────────────
   // US-014 范围：渲染消息区 + Markdown + 输入框 + 思考动画。
@@ -646,6 +869,28 @@ export default function ChatPage() {
                   disabled={!hasConversation}
                   className="min-h-[2.5rem] flex-1 resize-none rounded-warm border border-warm-border bg-white px-3 py-2 text-sm text-warm-text placeholder:text-warm-text-muted focus:border-warm-orange focus:outline-none disabled:bg-warm-menu disabled:text-warm-text-muted"
                 />
+                {/* 文件上传按钮：选择文本/代码文件作为上下文 */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  className="hidden"
+                  onChange={(e) => handleFileSelect(e)}
+                  disabled={!hasConversation || isUploading}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={!hasConversation || isUploading}
+                  aria-label="上传文件"
+                  title="上传文件（单文件上限 5 MB）"
+                  className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-warm border border-warm-border bg-white text-warm-text transition-colors hover:bg-warm-border/40 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isUploading ? (
+                    <LoaderCircle size={18} className="animate-spin" />
+                  ) : (
+                    <Upload size={18} />
+                  )}
+                </button>
                 <button
                   type="submit"
                   disabled={!hasConversation || isThinking || !inputText.trim()}
@@ -659,10 +904,163 @@ export default function ChatPage() {
                   )}
                 </button>
               </form>
+
+              {/* 待上传文件预览条 / 上传错误提示 */}
+              {(pendingFile || uploadError) && (
+                <div className="mt-2">
+                  {pendingFile && (
+                    <div className="flex items-center gap-2 rounded-warm border border-warm-border bg-warm-menu px-3 py-1.5 text-xs text-warm-text">
+                      <FileText size={14} className="shrink-0 text-warm-orange" />
+                      <span className="min-w-0 flex-1 truncate">
+                        {pendingFile.name}
+                        <span className="ml-1 text-warm-text-muted">
+                          （{formatSize(pendingFile.size)}）
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void handleUpload()}
+                        disabled={isUploading}
+                        className="rounded-warm bg-warm-orange px-2 py-0.5 text-white hover:bg-warm-orange/90 disabled:opacity-50"
+                      >
+                        上传
+                      </button>
+                      <button
+                        type="button"
+                        onClick={clearPendingFile}
+                        aria-label="移除文件"
+                        className="rounded p-0.5 text-warm-text-muted hover:bg-warm-border/60 hover:text-warm-text"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  )}
+                  {uploadError && (
+                    <p
+                      role="alert"
+                      className="rounded-warm bg-red-50 px-3 py-1.5 text-xs text-red-700"
+                    >
+                      {uploadError}
+                    </p>
+                  )}
+                </div>
+              )}
             </footer>
           </>
         )}
       </section>
+
+      {/* 右侧：输出文件面板 */}
+      <aside className="flex w-64 flex-shrink-0 flex-col border-l border-warm-border bg-warm-menu">
+        <header className="flex h-14 flex-shrink-0 items-center border-b border-warm-border px-4">
+          <h2 className="text-sm font-semibold text-warm-text">输出文件</h2>
+        </header>
+        <div className="flex-1 overflow-y-auto px-3 py-3">
+          {!hasConversation ? (
+            <p className="px-1 py-10 text-center text-xs text-warm-text-muted">
+              选择会话后查看输出文件
+            </p>
+          ) : isLoadingOutputs && outputFiles.length === 0 ? (
+            <div className="flex items-center justify-center py-10 text-xs text-warm-text-muted">
+              <LoaderCircle className="mr-2 animate-spin" size={14} />
+              正在加载…
+            </div>
+          ) : outputFiles.length === 0 ? (
+            <p className="px-1 py-10 text-center text-xs text-warm-text-muted">
+              暂无输出文件
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {outputFiles.map((file) => {
+                const previewable = isTextFile(file.filename)
+                return (
+                  <li
+                    key={file.filename}
+                    className="group rounded-warm border border-warm-border bg-white px-3 py-2"
+                  >
+                    <div className="flex items-start gap-2">
+                      <FileText
+                        size={15}
+                        className="mt-0.5 shrink-0 text-warm-text-muted"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p
+                          className="truncate text-xs font-medium text-warm-text"
+                          title={file.filename}
+                        >
+                          {file.filename}
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-warm-text-muted">
+                          {formatSize(file.size)} · {formatTime(file.modified_at)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openPreview(file)}
+                        disabled={!previewable}
+                        className="flex items-center gap-1 rounded-warm px-1.5 py-0.5 text-[11px] text-warm-text hover:bg-warm-border/40 disabled:cursor-not-allowed disabled:opacity-40"
+                        title={
+                          previewable ? '预览' : '该文件类型不支持预览'
+                        }
+                      >
+                        <Eye size={12} />
+                        预览
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => downloadOutput(file)}
+                        className="flex items-center gap-1 rounded-warm px-1.5 py-0.5 text-[11px] text-warm-text hover:bg-warm-border/40"
+                        title="下载"
+                      >
+                        <Download size={12} />
+                        下载
+                      </button>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
+      </aside>
+
+      {/* 输出文件文本预览弹窗 */}
+      {previewFile && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6"
+          onClick={() => setPreviewFile(null)}
+        >
+          <div
+            className="flex max-h-[80vh] w-full max-w-3xl flex-col rounded-warm bg-white shadow-warm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="flex h-12 flex-shrink-0 items-center justify-between border-b border-warm-border px-4">
+              <h2
+                className="truncate text-sm font-semibold text-warm-text"
+                title={previewFile.name}
+              >
+                {previewFile.name}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setPreviewFile(null)}
+                aria-label="关闭预览"
+                className="rounded p-1 text-warm-text-muted hover:bg-warm-border/40 hover:text-warm-text"
+              >
+                <X size={16} />
+              </button>
+            </header>
+            <div className="min-h-0 flex-1 overflow-auto p-4">
+              <TextFilePreview
+                url={previewFile.url}
+                onError={(msg) => setPageError(msg)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 删除二次确认弹窗 */}
       {deletingId && (
