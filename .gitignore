@@ -12,6 +12,9 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+.env
+backend/.env
+config/application.yml
 venv/
 .ruff_cache/
 .mypy_cache/

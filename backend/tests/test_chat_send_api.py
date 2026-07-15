@@ -15,6 +15,7 @@ and do not hit a real LLM. We stream hand-crafted OpenAI-format chunks.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -25,7 +26,7 @@ import keyring.backend
 import keyring.backends.fail
 from fastapi.testclient import TestClient
 
-from app.core.config import MODELS_FILE, TOOLS_FILE
+from app.core.config import CONVERSATIONS_DIR, MODELS_FILE, TOOLS_FILE, WORKSPACE_DIR
 from app.main import create_app
 from app.services import agents_store, conversations_store, models_store
 from app.services.agents_store import AGENTS_FILE
@@ -204,11 +205,28 @@ def _content_chunks(text: str) -> list[dict[str, Any]]:
 
 
 def _tool_call_chunks(
-    name: str, arguments: dict[str, Any], call_id: str = "call_1"
+    name: str,
+    arguments: dict[str, Any],
+    call_id: str = "call_1",
+    call_type: str = "function",
+    reasoning: str = "",
 ) -> list[dict[str, Any]]:
     """OpenAI streaming chunks that request a single tool call."""
     arg_str = json.dumps(arguments)
-    return [
+    chunks: list[dict[str, Any]] = []
+    if reasoning:
+        chunks.append(
+            {
+                "choices": [
+                    {
+                        "delta": {"content": reasoning},
+                        "index": 0,
+                        "finish_reason": None,
+                    }
+                ]
+            }
+        )
+    chunks.extend([
         {
             "choices": [
                 {
@@ -217,7 +235,7 @@ def _tool_call_chunks(
                             {
                                 "index": 0,
                                 "id": call_id,
-                                "type": "function",
+                                "type": call_type,
                                 "function": {"name": name, "arguments": ""},
                             }
                         ]
@@ -245,7 +263,8 @@ def _tool_call_chunks(
                 {"delta": {}, "index": 0, "finish_reason": "tool_calls"}
             ]
         },
-    ]
+    ])
+    return chunks
 
 
 # ── endpoint shape ──────────────────────────────────────────────────────────
@@ -299,6 +318,36 @@ def test_send_returns_sse_stream_with_content_and_done() -> None:
             e["data"]["text"] for e in _sse_chunks(resp) if e["event"] == "content"
         )
         assert text == "你好，世界"
+
+
+async def test_sse_stream_sends_heartbeat_while_agent_is_processing(
+    monkeypatch: Any,
+) -> None:
+    """US-023: 慢 Agent 处理时连接持续收到 SSE heartbeat。"""
+    from app.api import chat
+    from app.schemas.chat import ChatSendRequest
+    from app.services import sse_events
+
+    class ConnectedRequest:
+        async def is_disconnected(self) -> bool:
+            return False
+
+    async def slow_agent_loop(**_kwargs: Any) -> Any:
+        await asyncio.sleep(0.02)
+        yield sse_events.done_event()
+
+    monkeypatch.setattr(chat, "HEARTBEAT_INTERVAL", 0.001)
+    monkeypatch.setattr(chat, "run_agent_loop", slow_agent_loop)
+    payload = ChatSendRequest(
+        conversation_id="heartbeat-test",
+        agent_id="agent-test",
+        message="等待心跳",
+    )
+
+    chunks = [chunk async for chunk in chat._sse_stream(ConnectedRequest(), payload)]
+
+    assert sse_events.heartbeat_line() in chunks
+    assert chunks[-1] == sse_events.done_event()
 
 
 def test_send_persists_user_and_assistant_to_jsonl() -> None:
@@ -500,6 +549,220 @@ def test_tool_failure_surfaces_ok_false_and_continues() -> None:
         assert "安全拦截" in tool_result["data"]["result"]
 
 
+def test_intermediate_tool_round_text_is_thinking_and_persisted() -> None:
+    """Text accompanying a tool request is reasoning, not final content."""
+    _install_memory_keyring()
+    _reset_all()
+    with TestClient(create_app()) as client:
+        model_id = _create_model(client)
+        _attach_model_to_default(client, model_id)
+        conv_id = _create_conversation(client)
+        round1 = _make_stream_response(
+            _tool_call_chunks(
+                "read_file", {"path": "memory/missing.md"}, reasoning="先检查文件"
+            )
+        )
+        round2 = _make_stream_response(_content_chunks("检查完成"))
+        with patch("httpx.AsyncClient.stream", _stream_mock([round1, round2])):
+            resp = client.post(
+                "/api/chat/send",
+                json={
+                    "conversation_id": conv_id,
+                    "message": "检查文件",
+                    "agent_id": agents_store.get_default_agent()["id"],
+                },
+            )
+
+        events = _sse_chunks(resp)
+        assert [event["event"] for event in events] == [
+            "thinking",
+            "tool_call",
+            "tool_result",
+            "content",
+            "done",
+        ]
+        detail = conversations_store.get_conversation(conv_id)
+        assert detail is not None
+        thinking = next(event for event in detail["events"] if event["type"] == "thinking")
+        assert thinking["data"]["text"] == "先检查文件"
+
+
+def test_p0_end_to_end_read_file_stream_and_conversation_restore() -> None:
+    """US-023: mock 模型完整跑通工具调用、SSE 与 JSONL 历史恢复。"""
+    _install_memory_keyring()
+    _reset_all()
+    fixture_path = WORKSPACE_DIR / "us023-e2e-note.md"
+    original_contents = fixture_path.read_text(encoding="utf-8") if fixture_path.exists() else None
+    fixture_contents = "# P0 验收文件\n\n这是 read_file 返回的真实内容。\n"
+    fixture_path.write_text(fixture_contents, encoding="utf-8")
+
+    try:
+        with TestClient(create_app()) as client:
+            model_id = _create_model(client)
+            agent = _attach_model_to_default(client, model_id)
+            conversation_id = _create_conversation(client)
+            first_round = _make_stream_response(
+                _tool_call_chunks(
+                    "read_file",
+                    {"path": fixture_path.name},
+                    reasoning="我先读取验收文件。",
+                )
+            )
+            second_round = _make_stream_response(
+                _content_chunks("已读取文件。\n\n**P0 闭环验证完成。**")
+            )
+
+            with patch(
+                "httpx.AsyncClient.stream", _stream_mock([first_round, second_round])
+            ):
+                response = client.post(
+                    "/api/chat/send",
+                    json={
+                        "conversation_id": conversation_id,
+                        "message": "请读取验收文件并总结",
+                        "agent_id": agent["id"],
+                    },
+                )
+
+            assert response.status_code == 200
+            streamed_events = _sse_chunks(response)
+            assert [event["event"] for event in streamed_events] == [
+                "thinking",
+                "tool_call",
+                "tool_result",
+                "content",
+                "done",
+            ]
+            assert streamed_events[1]["data"] == {
+                "id": "call_1",
+                "name": "read_file",
+                "arguments": {"path": fixture_path.name},
+            }
+            assert fixture_contents == streamed_events[2]["data"]["result"]
+            assert "已读取文件。\n\n**P0 闭环验证完成。**" == "".join(
+                event["data"]["text"]
+                for event in streamed_events
+                if event["event"] == "content"
+            )
+
+            restored = client.get(f"/api/conversations/{conversation_id}")
+            assert restored.status_code == 200
+            restored_events = restored.json()["events"]
+            assert [event["type"] for event in restored_events] == [
+                "message",
+                "thinking",
+                "tool_call",
+                "tool_result",
+                "message",
+            ]
+            assert restored_events[1]["data"]["text"] == "我先读取验收文件。"
+            restored_call = restored_events[2]["data"]["tool_calls"][0]["function"]
+            assert restored_call["name"] == "read_file"
+            assert json.loads(restored_call["arguments"]) == {"path": fixture_path.name}
+            assert restored_events[3]["data"]["result"] == fixture_contents
+            assert restored_events[4]["data"]["text"].endswith("**P0 闭环验证完成。**")
+    finally:
+        if original_contents is None:
+            fixture_path.unlink(missing_ok=True)
+        else:
+            fixture_path.write_text(original_contents, encoding="utf-8")
+
+
+def test_tool_round_limit_saves_degradation_summary(monkeypatch: Any) -> None:
+    """The cap stops further model calls and saves completed work to outputs/."""
+    from app.services import agent_loop
+
+    _install_memory_keyring()
+    _reset_all()
+    monkeypatch.setattr(agent_loop, "MAX_TOOL_ROUNDS", 2)
+    with TestClient(create_app()) as client:
+        model_id = _create_model(client)
+        agent = _attach_model_to_default(client, model_id)
+        conv_id = _create_conversation(client)
+        mock_stream = _stream_mock([
+            _make_stream_response(
+                _tool_call_chunks("read_file", {"path": "missing-one.txt"}, "call_1")
+            ),
+            _make_stream_response(
+                _tool_call_chunks("read_file", {"path": "missing-two.txt"}, "call_2")
+            ),
+        ])
+        with patch("httpx.AsyncClient.stream", mock_stream):
+            response = client.post(
+                "/api/chat/send",
+                json={
+                    "conversation_id": conv_id,
+                    "message": "持续读取文件",
+                    "agent_id": agent["id"],
+                },
+            )
+
+    events = _sse_chunks(response)
+    assert events[-1] == {
+        "event": "done",
+        "data": {"note": "已达到最大循环次数，部分结果已保存。"},
+    }
+    assert mock_stream.call_count == 2
+    summary = (
+        CONVERSATIONS_DIR / conv_id / "outputs" / "_degradation_summary.md"
+    ).read_text(encoding="utf-8")
+    assert "## 已完成步骤" in summary
+    assert "1. read_file" in summary
+    assert "2. read_file" in summary
+    assert "## 未完成步骤" in summary
+
+
+def test_skill_call_is_dispatched_and_keeps_skill_type(tmp_path: Any) -> None:
+    """Skills share tool_calls but retain their distinct persisted type."""
+    from app.services import agent_loop
+
+    _install_memory_keyring()
+    _reset_all()
+    skills_dir = tmp_path / "skills"
+    skill_dir = skills_dir / "summarise"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("# 摘要技能\n\n按步骤输出摘要。", encoding="utf-8")
+
+    with patch.object(agent_loop, "SKILLS_CONFIG_DIR", skills_dir):
+        with TestClient(create_app()) as client:
+            model_id = _create_model(client)
+            agent = _attach_model_to_default(client, model_id)
+            updated = client.put(
+                f"/api/agents/{agent['id']}",
+                json={
+                    "name": agent["name"],
+                    "description": agent["description"],
+                    "model_id": model_id,
+                    "tools": agent["tools"],
+                    "skills": ["summarise"],
+                },
+            )
+            assert updated.status_code == 200
+            conv_id = _create_conversation(client)
+            round1 = _make_stream_response(
+                _tool_call_chunks("summarise", {"text": "会议记录"})
+            )
+            round2 = _make_stream_response(_content_chunks("摘要完成"))
+            with patch("httpx.AsyncClient.stream", _stream_mock([round1, round2])):
+                resp = client.post(
+                    "/api/chat/send",
+                    json={
+                        "conversation_id": conv_id,
+                        "message": "整理会议记录",
+                        "agent_id": agent["id"],
+                    },
+                )
+
+    detail = conversations_store.get_conversation(conv_id)
+    assert detail is not None
+    call = next(event for event in detail["events"] if event["type"] == "tool_call")
+    result = next(event for event in detail["events"] if event["role"] == "tool")
+    assert call["data"]["tool_calls"][0]["type"] == "skill"
+    assert result["data"]["type"] == "skill"
+    assert result["data"]["ok"] is True
+    assert "摘要技能" in result["data"]["result"]
+
+
 def test_disabled_tool_excluded_from_request() -> None:
     """Disabled tools must not appear in the model request's tools array."""
     _install_memory_keyring()
@@ -551,6 +814,54 @@ def test_disabled_tool_excluded_from_request() -> None:
         assert "read_file" in tool_names
         assert "write_file" in tool_names
         assert "execute_command" not in tool_names
+        assert "save_memory" in tool_names
+        assert "search_memory" in tool_names
+
+
+def test_memory_tools_are_dispatched_and_prompt_refreshes_each_round(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
+    """Memory tools are always exposed and saved long-term memory is refreshed."""
+    from app.services import agent_loop, memory_store, system_prompt
+
+    memory_file = tmp_path / "memory.md"
+    monkeypatch.setattr(memory_store, "LONG_TERM_MEMORY_FILE", memory_file)
+    monkeypatch.setattr(memory_store, "MEMORY_DIR", tmp_path / "memory")
+    monkeypatch.setattr(memory_store, "MEMORY_LOCK_FILE", tmp_path / "memory.lock")
+    monkeypatch.setattr(system_prompt, "MEMORY_FILE", memory_file)
+    captured_system_prompts: list[str] = []
+
+    _install_memory_keyring()
+    _reset_all()
+    with TestClient(create_app()) as client:
+        model_id = _create_model(client)
+        agent = _attach_model_to_default(client, model_id)
+        conv_id = _create_conversation(client)
+        responses = [
+            _make_stream_response(
+                _tool_call_chunks("save_memory", {"type": "long_term", "content": "用户偏好中文"})
+            ),
+            _make_stream_response(_content_chunks("已记录")),
+        ]
+
+        def _capture_stream(*_args: Any, **kwargs: Any) -> _FakeStreamContext:
+            captured_system_prompts.append(kwargs["json"]["messages"][0]["content"])
+            return _FakeStreamContext(responses.pop(0))
+
+        with patch("httpx.AsyncClient.stream", MagicMock(side_effect=_capture_stream)):
+            response = client.post(
+                "/api/chat/send",
+                json={"conversation_id": conv_id, "message": "记住偏好", "agent_id": agent["id"]},
+            )
+
+    assert response.status_code == 200
+    assert memory_file.read_text(encoding="utf-8") == "用户偏好中文\n"
+    assert "用户偏好中文" not in captured_system_prompts[0]
+    assert "用户偏好中文" in captured_system_prompts[1]
+    detail = conversations_store.get_conversation(conv_id)
+    assert detail is not None
+    result = next(event for event in detail["events"] if event["role"] == "tool")
+    assert result["data"]["name"] == "save_memory"
 
 def test_thinking_event_type_is_available() -> None:
     """The ``thinking`` event helper is wired and serialises correctly."""

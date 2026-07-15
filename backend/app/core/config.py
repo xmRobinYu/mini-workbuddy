@@ -8,8 +8,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # backend/app/core/config.py -> backend/app -> backend -> project root
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+load_dotenv(PROJECT_ROOT / "backend" / ".env")
 
 WORKSPACE_DIR = PROJECT_ROOT / "workspace"
 CONFIG_DIR = WORKSPACE_DIR / "config"
