@@ -486,6 +486,16 @@
   - 浏览器 SSE 验收依赖可用的测试模型与 API 密钥；常驻验证服务的临时凭据失效时，应复用本地 OpenAI 兼容 mock，而不要将测试密钥写入 workspace。
   - 流结束与断连后调用 `loadDetail(conversationId)` 从 JSONL 重建权威历史，可避免临时流式状态残留。
 ---
+## 2026-07-15 23:50 - US-017
+- 修复 Validator 所遇到的可复现验收环境缺口：使用隔离的临时 FastAPI 实例、`MOCK_API_KEY` 环境变量引用和本地 OpenAI 兼容 SSE mock，避免将测试凭据写入 `workspace`。
+- 浏览器验收（`http://127.0.0.1:5184/chat`）：向工具已启用的主 Agent 发送「请读取 real.txt 并总结」后，依次显示首段流式内容、`read_file` 卡片、`{"path":"real.txt"}` 参数、默认四行的工具结果预览、展开后的七行结果和最终回复；刷新并重新选择会话后从 JSONL 恢复相同历史。
+- 临时 mock、模型、会话、测试文件和服务均已清理，主 Agent 的原模型关联已恢复。
+- 更改的文件：`scripts/ralph/progress.txt`。
+- 质量检查：`frontend` 的 `npm run typecheck`、`npm run lint`、`npm run build` 通过；`backend` 的 `uv run pytest tests/test_chat_send_api.py` 与 `uv run mypy app` 通过。
+- **未来迭代的学习：**
+  - 当常驻验收环境没有可用密钥时，可启动隔离后端，并将临时模型配置为 `api_key_env`，用进程环境注入非敏感测试 token；验收后必须恢复 Agent 关联并删除模型和会话。
+  - OpenAI 兼容 mock 需根据请求消息中是否已有 `role=tool` 分两轮返回：首轮 `tool_calls`，第二轮最终 content，才能真实覆盖 Agent Loop 与前端的顺序渲染。
+---
 ## 2026-07-15 23:52 - US-017
 - 复核既有 SSE 流式聊天前端实现；不需要修改业务代码。`ChatPage.tsx` 已通过 `streamSse` 消费 POST SSE 流，按到达顺序渲染 thinking、content 和工具卡片，并在流结束或断连后从 JSONL 恢复会话。
 - 更改的文件：`scripts/ralph/progress.txt`。
@@ -494,4 +504,25 @@
 - **未来迭代的学习：**
   - 对需要真实模型的浏览器验收，优先采用隔离服务 + 环境变量形式的临时凭据 + 本地 OpenAI 兼容 mock；完成后清理模型、会话和服务，避免污染 `workspace`。
   - UI 的 SSE 消费应使用 `fetch` + `ReadableStream` 以支持 POST 请求；流结束与异常收尾都重新拉取会话详情，确保 JSONL 是权威状态。
+---
+## 2026-07-16 00:07 - US-017
+- 针对 Validator 第 3 次失败的“模型未配置 API 密钥”验收环境缺口完成隔离复验；未修改业务代码。
+  - 启动临时 OpenAI 兼容 SSE mock，并以环境变量引用的临时模型与仅启用 `read_file` 的临时 Agent 走完整 `POST /api/chat/send` 流程。
+  - 浏览器实测：流式首段回复、`read_file` 工具卡片、`{ "path": "real.txt" }` 参数、成功工具结果与后续流式回复均按到达顺序显示；刷新后重新选择会话，可从 JSONL 恢复相同工具卡片和结果。
+  - 已停止临时 mock/backend/frontend；临时运行态记录在共享 workspace 被并行环境重置，复核时无残留模型、Agent 或会话。
+- 更改的文件：`scripts/ralph/progress.txt`。
+- 质量检查：`frontend` 的 `npm run typecheck`、`npm run lint`、`npm run build` 通过；`backend` 的 `uv run pytest tests/test_chat_send_api.py`（10 passed）与 `uv run mypy app` 通过。
+- **未来迭代的学习：**
+  - UI SSE 端到端验收应使用隔离后端与本地 OpenAI 兼容 mock；模型以 `api_key_env` 引用、进程环境注入临时 token，避免将凭据写入 workspace。
+  - mock 的 `tool_calls[].function.arguments` 必须是有效 JSON 字符串（例如 `{"path":"real.txt"}`）；双重转义会让后端把参数当原始文本，触发工具路径安全校验失败。
+  - 在共享 workspace 的并行验证环境中，验收运行态可能被其他进程重置；复核清理接口返回 404 时应先列举当前记录，确认无残留后再结束。
+---
+## 2026-07-16 00:25 - US-017
+- 新增可复用的本地 OpenAI 兼容 SSE mock，用于无需外部模型凭据时复验两轮工具调用：首轮返回流式文本与 `read_file` 调用，第二轮在收到 tool 结果后返回最终文本。
+- 更改的文件：`scripts/ralph/us017_sse_mock.py`、`scripts/ralph/progress.txt`。
+- 质量检查：`frontend` 的 `npm run typecheck`、`npm run lint`、`npm run build` 通过；`backend` 的 `uv run pytest tests/test_chat_send_api.py`（10 passed）与 `uv run mypy app` 通过；mock 脚本通过 `py_compile`。
+- 浏览器验证：已使用 agent-browser 尝试访问常驻聊天页，但该容器中的 Chromium 无法连通宿主本地 Vite 服务（`ERR_CONNECTION_REFUSED`）；需要在可访问本地服务的浏览器环境中执行 mock 端到端复验。
+- **未来迭代的学习：**
+  - `scripts/ralph/us017_sse_mock.py` 提供最小 OpenAI `chat/completions` 流式协议，可配合环境变量引用的临时模型验证工具循环，无需写入真实密钥。
+  - 浏览器自动化运行在隔离网络命名空间时，即使 shell `curl` 可访问本机端口，Chromium 也可能无法访问；应改在同一网络命名空间启动服务或使用可连接的浏览器环境。
 ---
