@@ -435,3 +435,21 @@
   - 渲染任意来源文本（如 progress.txt 日志）到 innerHTML 前，必须先 escape 再做 Markdown 式替换（`**bold**`），顺序反了会把转义后的实体再破坏
   - supervisor 架构下停止顺序：先停被守护的子进程、再停 supervisor，否则 supervisor 可能在子进程仍存活时触发自动重启
 ---
+
+## 2026-07-15 11:15 - US-016
+- 复核并确认 US-016「实现 SSE 流式发送消息后端端点」已实现完成（前序 commits 已提交，工作树干净）
+- 验收点逐条核对：
+  - `POST /api/chat/send` 返回 `StreamingResponse(media_type="text/event-stream")` + `Cache-Control: no-cache` + `X-Accel-Buffering: no`（`app/api/chat.py`）
+  - 心跳：`app/services/sse_events.py` 的 `HEARTBEAT_LINE = ": heartbeat\n\n"`，`HEARTBEAT_SECONDS = 15`，`heartbeat_producer` 每隔 `HEARTBEAT_INTERVAL`（=15s）入队一次
+  - 断连终止：`_sse_stream` 主循环每轮 `await request.is_disconnected()`，`agent_loop` 每轮也校验；finally 中 cancel producer/heartbeat 双任务
+  - JSONL 保留：`run_agent_loop` 每轮 user/assistant/tool 事件即时 `conversations_store.append_event` 落盘，断连不丢已写记录
+  - 请求参数：`ChatSendRequest` 含 `conversation_id` / `message` / `agent_id` / `uploaded_file_paths`（可选），min_length=1 校验
+  - SSE 事件类型：`thinking` / `content` / `tool_call` / `tool_result` / `done` / `error` 六类全部在 `sse_events.py` 实现
+- 更改的文件：无代码改动（仅本进度日志）；前序 feat 提交 `cad24bb` / `a37b715` 已落地
+- 质量检查：`uv run pytest` 122 passed（含 `test_chat_send_api.py` 10 个 SSE 用例）；`uv run mypy app` Success: no issues found in 32 source files
+- **未来迭代的学习：**
+  - US-016 的 SSE 端点已完成；`workflowMode` 未设置 → 默认 `develop_and_validate`，本轮不在 Developer 阶段置 `passes=true`，交由 Validator 验证
+  - 断连检测是双重保险：`_sse_stream` 主循环轮询 + `agent_loop` 每轮校验 + 写已关闭连接会抛异常，三条路径任一触发即终止
+  - 心跳与 Agent 事件通过 `asyncio.Queue` 解耦：`heartbeat_producer` 周期入队，主生成器在 1s 超时窗口内 drain，模型长耗时轮次期间也能发心跳
+  - Agent Loop 工具调用采用 `index` 累积合并 delta（`_merge_tool_call_deltas`），下一轮请求的 assistant 消息必须携带 OpenAI wire-shape 的 `tool_calls`（arguments 为 JSON 字符串）
+---
