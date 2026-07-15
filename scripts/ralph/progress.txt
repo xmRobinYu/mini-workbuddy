@@ -18,6 +18,9 @@
 - 内置工具集固定为 `read_file`/`write_file`/`execute_command` 三元组（不可增删），启用状态存 `workspace/config/tools.json`，缺失默认 enabled=True；安全拦截统一抛 `SecurityBlockedError`（reason 字段回传给 Agent）
 - 路径安全统一用 `app/core/path_security.py` 的 `is_safe_workspace_path`（`..` 拒绝 + 符号链接逃逸检测 + workspace 前缀校验）；工具函数中相对路径需先锚定到 `WORKSPACE_DIR` 再校验
 - `execute_command` 安全护栏：黑名单子串匹配(大小写不敏感)、`subprocess.run(timeout=60)` 自动 SIGKILL、working_dir 限定 workspace/、输出截断 100KB、`_strip_sensitive_env` 剥离 `OPENAI_API_KEY`/`MINI_WORKBUDDY_*`/`*_TOKEN` 等敏感环境变量
+- 测试隔离陷阱：`workspace/config/tools.json`（工具启用态）**不在** `agents_store.reset_for_test()`/`conversations_store.reset_for_test()` 的清理范围内，且 workspace/ 被 gitignore 不会随 commit 重置。任何依赖工具启用态的测试（如 agent-loop 请求体断言）必须在 setup 里显式调 `tools_store.reset_for_test()`，否则上一次测试遗留的 disabled 标志会静默改变后续测试行为（非确定性失败）
+- SSE 流式端点 pattern：`StreamingResponse(async_gen, media_type="text/event-stream")` + `Cache-Control: no-cache` + `X-Accel-Buffering: no`（禁 nginx 缓冲）；事件统一 `data: {json}\n\n` 单行格式（见 `app/services/sse_events.py`），心跳为 `: heartbeat\n\n` 注释行；断连检测用 `await request.is_disconnected()` 轮询 + 写已关闭连接会抛异常双重保险
+- Agent Loop（`app/services/agent_loop.py`）自解析 OpenAI 流式 `data:` 行（不依赖 OpenAI SDK），工具调用 delta 按 `index` 累积合并；每轮 user/assistant/tool 事件即时 `conversations_store.append_event` 落 JSONL，断连也保留已写记录
 
 ---
 
@@ -387,4 +390,22 @@
   - 前端 5MB 校验是 `handleFileSelect` 中 `file.size > MAX_UPLOAD_BYTES` 预校验（不发请求），后端 `MAX_UPLOAD_BYTES` 413 兜底；双重防护，验收「超过 5MB 显示错误提示」两端都覆盖
   - 验证完毕需清理 workspace/conversations/<id>/uploads/ 下的测试上传文件（workspace 被 gitignore，不影响提交，但避免污染运行态）
   - 本机 5173 端口被另一个无关项目（tiger admin 登录页）占用；本项目前端 dev server 实际在 5181，浏览器验证用 5181
+---
+
+## 2026-07-15 08:10 - US-016
+- 实现了 SSE 流式发送消息后端端点 `POST /api/chat/send`，覆盖全部验收标准：
+  - `backend/app/api/chat.py`：`/chat/send` 返回 `StreamingResponse`（`text/event-stream` + `Cache-Control: no-cache` + `X-Accel-Buffering: no`）；`_sse_stream` 用 `asyncio.Queue` 串联 agent_producer（驱动 Agent Loop）与 heartbeat_producer（每 15s 投递 `: heartbeat` 注释行），主循环 `await request.is_disconnected()` 轮询断连并 `task.cancel()` 终止 Agent Loop，finally 块回收两个 producer task
+  - `backend/app/schemas/chat.py`：`ChatSendRequest`（conversation_id/message/agent_id 必填 + uploaded_file_paths 可选，`str_strip_whitespace` + min_length=1 校验）
+  - `backend/app/services/sse_events.py`：纯函数式 SSE 事件工厂（thinking/content/tool_call/tool_result/done/error + heartbeat_line），统一 `data: {json}\n\n` 单行格式
+  - `backend/app/services/agent_loop.py`：`run_agent_loop` 异步生成器自解析 OpenAI 流式 `data:` 行（httpx，不依赖 SDK），按 `index` 累积合并 tool_call delta；解析 Agent→模型→api_key 上下文，从 JSONL 还原历史消息；每轮 user/assistant/tool 事件即时 `append_event` 落盘，断连也保留已写记录；内置工具经 `_execute_tool` 执行（SecurityBlockedError→ok=False 回传模型，不自动重试）；50 轮上限发 done note
+  - `backend/app/services/conversations_store.py`：新增 `append_event`（per-conversation filelock 守护追加写 + 刷 updated_at）
+  - `backend/tests/test_chat_send_api.py`：10 个测试，httpx 层 mock 流式 chunk（手造 OpenAI delta），覆盖 content/done/error/tool_call/tool_result/JSONL 持久化/参数校验/禁用工具排除
+- 更改的文件：backend/app/api/chat.py、backend/app/schemas/chat.py、backend/app/services/sse_events.py、backend/app/services/agent_loop.py、backend/app/services/conversations_store.py、backend/tests/test_chat_send_api.py、.gitignore（忽略 `.vite/`）、scripts/ralph/ralph.py + test_ralph.py + ralph_service.sh（supervisor 自动重启，本 story 提交物的一部分）
+- 质量检查：`uv run mypy app` Success（32 source files）；`uv run pytest` 122 passed（含 10 个新增 chat send 测试）
+- **未来迭代的学习：**
+  - **测试隔离关键陷阱**：`workspace/config/tools.json` 不被 `agents_store.reset_for_test()`/`conversations_store.reset_for_test()` 清理，且 workspace/ 被 gitignore 不随 commit 重置。agent-loop 测试若不显式 `tools_store.reset_for_test()`，上一次测试禁用的工具（如 execute_command/write_file）会遗留，使 `test_disabled_tool_excluded_from_request` 等“期望某工具存在”的断言非确定性失败。已在该测试的 `_reset_all()` 补上 `tools_store.reset_for_test()`
+  - 手造 OpenAI 流式响应：用 `httpx.Response(status_code=200, content=body, request=httpx.Request(...))` + 覆盖 `response.aiter_lines = async gen` 模拟流；mock `httpx.AsyncClient.stream` 返回 async context manager（`__aenter__` yield response），`MagicMock(side_effect=[ctx1, ctx2])` 支持多轮工具循环
+  - SSE 断连测试用 TestClient 同步阻塞较难模拟真实中途断连；当前以“error+done 收尾 + JSONL 已写记录保留”作为断连保留语义的等价验证（agent_loop 在 producer 异常时仍 append 已有 text_buf 再发 error/done）
+  - `run_agent_loop` 的 `_system_prompt` 含 outputs 路径说明（`{conversation_id}` 占位），完整记忆/技能/路径规则注入留给 US-018+，本 story 保持最小化
+  - Ralph supervisor 改动（`_run_supervisor` + `_supervised_child_args` + `ralph_service.sh`）属本次 working tree 提交物，已一并提交；新增 `SUPERVISOR_RESTART_DELAY_SECONDS=5`，异常退出后自动重启，正常退出（exit 0）则停止
 ---
