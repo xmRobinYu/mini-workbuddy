@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- SSE 保活可通过替换慢速 Agent Loop 并下调 `HEARTBEAT_INTERVAL` 的异步测试验证；断言 `: heartbeat` 出现在 `done` 前，避免等待真实 15 秒。
 - 系统强制可用的工具应由 Agent Loop 在构建模型函数定义时固定注入，不应加入 `BUILTIN_TOOL_NAMES` 或 `tools.json`，这样工具管理和 Agent 配置不会暴露禁用入口。
 - Agent Loop 达到固定轮数上限时，可基于已持久化的 `tool_call` 事件生成降级摘要；这样中间结果与 JSONL 的权威执行记录保持一致。
 - 对 OpenAI 兼容接口，出站 `tool_calls` 必须保持 `type: "function"`；业务层的 `tool`/`skill` 区分应在持久化和分发层保留，避免破坏模型协议。
@@ -595,5 +596,15 @@
 - 质量检查：`cd backend && uv run pytest tests/test_memory_store.py tests/test_system_prompt.py tests/test_chat_send_api.py -q`（20 passed）、`uv run mypy app`（Success: 34 source files）、`uv run pytest -q`（136 passed）。
 - **未来迭代的学习：**
   - 系统强制可用工具应在 `_build_tool_definitions` 直接追加，不能放入 `BUILTIN_TOOL_NAMES`，否则会意外出现在工具管理和 Agent 配置 UI。
-  - 每轮模型请求前更新 `messages[0]` 的系统提示词，可使本轮工具新写入的动态上下文在下一轮立即生效，同时保留已有会话消息。
+- 每轮模型请求前更新 `messages[0]` 的系统提示词，可使本轮工具新写入的动态上下文在下一轮立即生效，同时保留已有会话消息。
+---
+## 2026-07-16 01:12 - US-023
+- 新增 P0 闭环后端回归测试：本地 mock 模型先请求 `read_file`、再返回 Markdown 回复，真实读取 workspace 验收文件，断言 SSE 的 thinking/tool_call/tool_result/content/done 顺序以及 `GET /api/conversations/{id}` 从 JSONL 恢复的完整事件序列。
+- 新增 SSE 心跳保活回归测试：慢速 Agent Loop 处理期间会在完成事件前发送 heartbeat。
+- 浏览器验收（agent-browser，隔离 mock 模型 + Agent）：发送读取 `real.txt` 的消息后可见可折叠的「Agent 思考中…」、`read_file` 参数、真实文件结果和最终回复；会话进入历史列表，刷新并重新打开后完整工具过程从 JSONL 恢复。
+- 更改的文件：`backend/tests/test_chat_send_api.py`、`scripts/ralph/progress.txt`。
+- 质量检查：`cd backend && uv run pytest -q`（138 passed）、`uv run mypy app`（Success: 34 source files）、`cd frontend && npm run typecheck && npm run lint` 通过。
+- **未来迭代的学习：**
+  - 端到端持久化的 tool_call 使用 OpenAI wire shape，`function.arguments` 是 JSON 字符串；实时 SSE 工具卡片则使用已解析的对象，两者断言应分别处理。
+  - 隔离浏览器验收可使用本地 OpenAI 流式 mock 和 `api_key_env` 临时模型；完成后恢复 Agent 原模型、删除临时模型/会话/文件并停止服务。
 ---
