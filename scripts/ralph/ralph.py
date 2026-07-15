@@ -753,8 +753,8 @@ def _stop_process_from_pid_file(path: Path, label: str) -> bool:
 
 
 def _stop_processes() -> int:
-    stopped_supervisor = _stop_process_from_pid_file(SUPERVISOR_PID_FILE, "Ralph supervisor")
     stopped_ralph = _stop_process_from_pid_file(PID_FILE, "Ralph")
+    stopped_supervisor = _stop_process_from_pid_file(SUPERVISOR_PID_FILE, "Ralph supervisor")
     if not stopped_supervisor and not stopped_ralph:
         print("Ralph 未在运行")
     _write_supervisor_state("stopped")

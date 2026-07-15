@@ -162,12 +162,6 @@
       <span id="completedElapsedInfo">Done 0s</span>
     </div>
   </div>
-  <div class="system-strip">
-    <div class="system-chip glass" id="systemCpu">CPU --</div>
-    <div class="system-chip glass" id="systemMem">RSS --</div>
-    <div class="system-chip glass" id="systemHostMem">Host MEM --</div>
-  </div>
-
   <!-- Main -->
   <div class="main">
     <div class="stories-panel glass-lg">
@@ -187,6 +181,11 @@
       <div class="phase-text" id="phaseText">等待启动</div>
     </div>
     <div class="clock" id="clock"></div>
+  </div>
+  <div class="system-strip">
+    <div class="system-chip glass" id="systemCpu">CPU --</div>
+    <div class="system-chip glass" id="systemMem">RSS --</div>
+    <div class="system-chip glass" id="systemHostMem">Host MEM --</div>
   </div>
 </div>
 
@@ -268,10 +267,11 @@ function renderLogs(logs) {
     const isLatest = i === secs.length - 1;
     const lines = sec.split('\n');
     const header = lines[0].replace(/^## /, '').trim();
-    const body = lines.slice(1).join('\n').trim().replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    const body = lines.slice(1).join('\n').trim();
+    const bodyHtml = esc(body).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
     return `<div class="log-section ${isLatest ? 'glass-lg' : 'glass'}">
       <div class="log-header ${isLatest ? 'latest' : ''}">${esc(header)}</div>
-      <div class="log-body">${body}</div>
+      <div class="log-body">${bodyHtml}</div>
     </div>`;
   }).join('');
   el.scrollTop = el.scrollHeight;

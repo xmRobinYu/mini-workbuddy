@@ -10,7 +10,7 @@ import webbrowser
 import time
 import os
 import argparse
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import config
@@ -120,6 +120,10 @@ def _build_system_response() -> dict:
 
 
 class _Handler(BaseHTTPRequestHandler):
+    def setup(self) -> None:
+        self.request.settimeout(10)
+        super().setup()
+
     def do_GET(self) -> None:
         path = self.path.split("?")[0]
 
@@ -199,6 +203,12 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
 
+class _DashboardServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+    request_queue_size = 64
+
+
 def start(port: int = 7333, max_iterations: int = 100, open_browser: bool = True, host: str = "127.0.0.1", agent: str = "codex") -> None:
     # 支持通过环境变量 SKILLHUB_PORT 覆盖端口
     env_port = os.environ.get("SKILLHUB_PORT")
@@ -213,7 +223,7 @@ def start(port: int = 7333, max_iterations: int = 100, open_browser: bool = True
         _state["max_iterations"] = max_iterations
         _state["agent"] = agent
 
-    server = HTTPServer((host, port), _Handler)
+    server = _DashboardServer((host, port), _Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
 
