@@ -251,6 +251,34 @@ def search_conversations(keyword: str) -> list[dict[str, Any]]:
     return matches
 
 
+def append_event(conversation_id: str, event: dict[str, Any]) -> dict[str, Any]:
+    """Append a single interaction event to the conversation's JSONL.
+
+    The write is guarded by the per-conversation ``filelock`` so concurrent
+    appends serialise, and the sidecar metadata's ``updated_at`` is bumped so
+    the conversation floats to the top of list/search ordering. Corrupt or
+    missing conversations are tolerated: a missing directory is materialised
+    on demand (the event is never lost).
+
+    Returns the same ``event`` dict for convenience.
+    """
+    directory = _conv_dir(conversation_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    jsonl = _jsonl_path(conversation_id)
+    lock = FileLock(str(_lock_path(conversation_id)))
+    with lock:
+        # Append one JSON object per line (UTF-8, no trailing separator issues).
+        with jsonl.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(event, ensure_ascii=False))
+            fh.write("\n")
+        # Bump updated_at so list/search reflect the new activity.
+        meta = _read_meta(conversation_id)
+        if meta is not None:
+            meta["updated_at"] = _utcnow_iso()
+            _write_meta(meta)
+    return event
+
+
 def reset_for_test() -> None:
     """Test helper: wipe the entire conversations directory for a clean slate."""
     if CONVERSATIONS_DIR.exists():
@@ -266,5 +294,6 @@ __all__ = [
     "rename_conversation",
     "delete_conversation",
     "search_conversations",
+    "append_event",
     "reset_for_test",
 ]

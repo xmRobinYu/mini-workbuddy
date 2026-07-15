@@ -22,6 +22,7 @@ import state_store
 MAX_ITERATIONS = 100
 TIMEOUT_SECONDS = 30 * 60
 POLL_INTERVAL_SECONDS = 5
+SUPERVISOR_RESTART_DELAY_SECONDS = 5
 
 # Agent 选择：支持 "claude"、"codex"、"opencode"、"atomcode"
 # 用法：python ralph.py [agent] [model]
@@ -610,12 +611,13 @@ def format_duration(seconds: float) -> str:
         return f"{s}秒"
 
 
-def _write_supervisor_state(status: str, pid: int | None = None) -> None:
+def _write_supervisor_state(status: str, pid: int | None = None, child_pid: int | None = None) -> None:
     _ensure_runtime_dir()
     payload = {
-        "mode": "compat-noop",
+        "mode": "supervisor",
         "status": status,
         "pid": pid,
+        "childPid": child_pid,
         "updatedAt": int(time.time()),
     }
     SUPERVISOR_STATE_FILE.write_text(
@@ -629,7 +631,8 @@ def _write_supervisor_state(status: str, pid: int | None = None) -> None:
 def _detach_process() -> int:
     _ensure_runtime_dir()
     running_pid = _read_pid(PID_FILE)
-    if _is_process_running(running_pid):
+    supervisor_pid = _read_pid(SUPERVISOR_PID_FILE)
+    if _is_process_running(running_pid) or _is_process_running(supervisor_pid):
         print(f"Ralph 已在后台运行，pid={running_pid}")
         return 0
 
@@ -654,6 +657,46 @@ def _detach_process() -> int:
     return 0
 
 
+def _supervised_child_args() -> list[str]:
+    excluded = {"--detach", "--supervise"}
+    return [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        *[arg for arg in sys.argv[1:] if arg not in excluded],
+    ]
+
+
+def _run_supervisor() -> int:
+    _ensure_runtime_dir()
+    _write_pid(SUPERVISOR_PID_FILE, os.getpid())
+    child_args = _supervised_child_args()
+
+    try:
+        while True:
+            child = subprocess.Popen(
+                child_args,
+                cwd=str(PROJECT_ROOT),
+                env=os.environ.copy(),
+            )
+            _write_pid(PID_FILE, child.pid)
+            _write_supervisor_state("running", pid=os.getpid(), child_pid=child.pid)
+            exit_code = child.wait()
+            _clear_pid(PID_FILE)
+
+            if exit_code == 0:
+                _write_supervisor_state("completed", pid=os.getpid())
+                return 0
+
+            _write_supervisor_state("restarting", pid=os.getpid())
+            print(
+                f"Ralph 异常退出 (exit_code={exit_code})，"
+                f"{SUPERVISOR_RESTART_DELAY_SECONDS} 秒后重启..."
+            )
+            time.sleep(SUPERVISOR_RESTART_DELAY_SECONDS)
+    finally:
+        _clear_pid(SUPERVISOR_PID_FILE)
+
+
 def _print_status() -> int:
     pid = _read_pid(PID_FILE)
     running = _is_process_running(pid)
@@ -671,7 +714,7 @@ def _print_status() -> int:
     if supervisor_running:
         print(f"supervisor: running (pid={supervisor_pid})")
     elif SUPERVISOR_STATE_FILE.exists():
-        print("supervisor: compat-noop")
+        print("supervisor: stopped")
     else:
         print("supervisor: stopped")
         if supervisor_pid is not None:
@@ -725,7 +768,7 @@ def main():
     parser.add_argument("--status", action="store_true", help="输出 Ralph 当前状态")
     parser.add_argument("--stop", action="store_true", help="停止后台 Ralph 进程")
     parser.add_argument("--detach", action="store_true", help="以后台模式启动 Ralph")
-    parser.add_argument("--supervise", action="store_true", help="兼容旧入口，当前作为 no-op 接受")
+    parser.add_argument("--supervise", action="store_true", help="异常退出后自动重启 Ralph")
     parser.add_argument("--remote", action="store_true", help="允许远程访问 Dashboard (绑定 0.0.0.0)")
     parser.add_argument("--story-id", dest="story_id", help="只处理指定 story")
     parser.add_argument("--prd-file", dest="prd_file", help="指定 Ralph 使用的 prd.json 路径")
@@ -785,7 +828,7 @@ def main():
     _ensure_runtime_dir()
     _write_pid(PID_FILE, os.getpid())
     if args.supervise:
-        _write_supervisor_state("running", pid=os.getpid())
+        raise SystemExit(_run_supervisor())
 
     try:
         dashboard.start(port=args.dashboard_port, max_iterations=MAX_ITERATIONS, host=host, open_browser=False, agent=AGENT)
@@ -945,8 +988,6 @@ def main():
         sys.exit(1)
     finally:
         _clear_pid(PID_FILE)
-        if args.supervise:
-            _write_supervisor_state("stopped")
 
 
 if __name__ == "__main__":
