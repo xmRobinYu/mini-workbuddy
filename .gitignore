@@ -1,21 +1,43 @@
 # macOS
 .DS_Store
 
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
 # Python
 __pycache__/
 *.pyc
 *.pyo
 .venv/
 venv/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+*.log
 
 # Ralph state
 scripts/ralph/ralph_state.db
 scripts/ralph/prd.json.bak
+scripts/ralph/__pycache__/
+scripts/ralph/.pytest_cache/
 
 # Node
 node_modules/
 dist/
 .vite/
+.eslintcache
+*.tsbuildinfo
+
+# Env / secrets
+.env
+.env.*
+!.env.example
 
 # Workspace (runtime data)
 workspace/

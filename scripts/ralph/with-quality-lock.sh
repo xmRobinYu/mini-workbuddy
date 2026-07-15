@@ -15,7 +15,7 @@ if [[ $# -eq 0 ]]; then
   exit 2
 fi
 
-LOCK_DIR="${RALPH_RUNTIME_DIR:-${HOME}/logs/skillhub}"
+LOCK_DIR="${RALPH_RUNTIME_DIR:-${HOME}/logs/mini-workbuddy}"
 CONFIG_FILE="${LOCK_DIR}/ralph-quality-config.json"
 WAIT_LOG="${LOCK_DIR}/ralph-quality-lock.log"
 QUALITY_WAIT_DIR="${LOCK_DIR}/ralph-quality-wait"

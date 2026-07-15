@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://skillhub.local/schemas/ralph/job.schema.json",
+  "$id": "https://mini-workbuddy.local/schemas/ralph/job.schema.json",
   "title": "Ralph Job Configuration",
   "type": "object",
   "additionalProperties": false,
