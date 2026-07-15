@@ -608,3 +608,14 @@
   - 端到端持久化的 tool_call 使用 OpenAI wire shape，`function.arguments` 是 JSON 字符串；实时 SSE 工具卡片则使用已解析的对象，两者断言应分别处理。
   - 隔离浏览器验收可使用本地 OpenAI 流式 mock 和 `api_key_env` 临时模型；完成后恢复 Agent 原模型、删除临时模型/会话/文件并停止服务。
 ---
+## 2026-07-16 01:25 - US-023
+- 完成 Validator 记录的浏览器闭环复验：在隔离的本地 OpenAI 兼容流式 mock、临时模型和仅启用 `read_file` 的 Agent 环境中，真实操作聊天页。
+  - 选择 Agent 并发送读取 `workspace/real.txt` 的消息后，确认可折叠 thinking、`read_file` 路径参数、工具结果与 Markdown 最终回复均在界面中显示。
+  - 刷新页面后重新选择历史会话，确认 JSONL 持久化的 thinking、工具调用、工具结果和最终回复完整恢复。
+  - 已清理临时 mock 服务、前后端服务、浏览器会话、验收文件及临时运行态资源；共享 workspace 被并行环境重置时，清理接口返回 404，未发现残留。
+- 更改的文件：`scripts/ralph/progress.txt`。
+- 质量检查：`cd backend && uv run pytest -q`（138 passed）；`uv run mypy app`（Success: 34 source files）；`cd frontend && npm run typecheck && npm run lint && npm run build` 通过。
+- **未来迭代的学习：**
+  - 容器内 agent-browser 首次启动可能因 Chromium sandbox 受限失败；关闭遗留 daemon 后以 `--no-sandbox` 启动即可连接本地 Vite 服务。
+  - 常驻服务的运行态不可靠或不可用时，可通过本地 OpenAI SSE mock、`api_key_env` 临时模型和隔离端口完成完整浏览器闭环，验收后使用 API 删除临时资源。
+---
