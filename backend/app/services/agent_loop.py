@@ -36,7 +36,8 @@ from typing import Any
 import httpx
 
 from app.schemas.tool import SecurityBlockedError
-from app.core.config import SKILLS_CONFIG_DIR
+from app.core.config import CONVERSATIONS_DIR, SKILLS_CONFIG_DIR
+from app.core.path_security import is_safe_workspace_path
 from app.services import conversations_store, sse_events, tool_functions
 from app.services.agents_store import get_agent, read_agent_md
 from app.services.model_tester import _build_chat_url, _resolve_api_key
@@ -49,6 +50,8 @@ logger = logging.getLogger(__name__)
 # degradation behaviour (saving intermediate outputs + summary) is US-021;
 # here we enforce the cap and emit a done-event note when hit.
 MAX_TOOL_ROUNDS = 50
+DEGRADATION_SUMMARY_FILENAME = "_degradation_summary.md"
+DEGRADATION_NOTICE = "已达到最大循环次数，部分结果已保存。"
 
 # Heartbeat cadence (acceptance criterion: every 15 s).
 HEARTBEAT_INTERVAL = sse_events.HEARTBEAT_SECONDS
@@ -70,6 +73,43 @@ def _utcnow_iso() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _save_degradation_summary(conversation_id: str) -> None:
+    """Save the completed tool-call rounds when the loop reaches its cap."""
+    conversation = conversations_store.get_conversation(conversation_id)
+    completed_rounds = [
+        event
+        for event in (conversation or {}).get("events", [])
+        if event.get("type") == "tool_call"
+    ]
+    completed_steps: list[str] = []
+    for index, event in enumerate(completed_rounds, start=1):
+        calls = event.get("data", {}).get("tool_calls", [])
+        names = [
+            call.get("function", {}).get("name", "未知调用")
+            for call in calls
+            if isinstance(call, dict)
+        ]
+        completed_steps.append(f"{index}. " + "、".join(names or ["未知调用"]))
+
+    completed_section = "\n".join(f"- {step}" for step in completed_steps)
+    if not completed_section:
+        completed_section = "- 无"
+    summary = (
+        "# Agent Loop 降级摘要\n\n"
+        f"> {DEGRADATION_NOTICE}\n\n"
+        "## 已完成步骤\n"
+        f"{completed_section}\n\n"
+        "## 未完成步骤\n"
+        "- Agent 在达到工具/技能调用轮数上限后被强制终止，尚未生成最终回复。\n"
+        "- 请基于已保存的中间结果继续任务。\n"
+    )
+    output_path = CONVERSATIONS_DIR / conversation_id / "outputs" / DEGRADATION_SUMMARY_FILENAME
+    if not is_safe_workspace_path(output_path):
+        raise ValueError("非法的会话 id：输出目录越界 workspace/")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(summary, encoding="utf-8")
 
 
 def _build_tool_definitions(agent: dict[str, Any]) -> list[dict[str, Any]]:
@@ -435,8 +475,11 @@ async def run_agent_loop(
     while True:
         rounds += 1
         if rounds > MAX_TOOL_ROUNDS:
-            note = "已达到最大循环次数（50 轮），部分中间结果已保存。"
-            yield sse_events.done_event(note)
+            try:
+                _save_degradation_summary(conversation_id)
+            except OSError:
+                logger.exception("保存 Agent Loop 降级摘要失败（会话 %s）", conversation_id)
+            yield sse_events.done_event(DEGRADATION_NOTICE)
             return
 
         if await request.is_disconnected():

@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Agent Loop 达到固定轮数上限时，可基于已持久化的 `tool_call` 事件生成降级摘要；这样中间结果与 JSONL 的权威执行记录保持一致。
 - 对 OpenAI 兼容接口，出站 `tool_calls` 必须保持 `type: "function"`；业务层的 `tool`/`skill` 区分应在持久化和分发层保留，避免破坏模型协议。
 - 仅供 UI 恢复的 assistant `thinking` 事件不应重复注入后续模型上下文；关联的 tool-call assistant 消息才是模型上下文的权威记录。
 - JSONL 事件的固定字段在 `conversations_store.append_event` 集中补默认值；所有写入入口自动获得一致的持久化结构。
@@ -571,4 +572,15 @@
 - 质量检查：`cd backend && uv run pytest tests/test_chat_send_api.py`（12 passed）、`uv run pytest`（131 passed）、`uv run mypy app`（Success: no issues found in 33 source files）。
 - **未来迭代的学习：**
   - OpenAI 兼容流式响应的调用 `type` 是 wire-level `function`，不能用于业务层的 tool/skill 分发；应使用当前请求实际暴露的函数名称映射恢复业务类型。
+---
+
+## 2026-07-16 00:53 - US-021
+- 实现 Agent Loop 达到工具/技能调用上限后的降级策略：在终止模型请求前，按已落盘的 `tool_call` 事件生成 `outputs/_degradation_summary.md`，列出“已完成步骤”和“未完成步骤”。
+- SSE `done` 事件现在使用“已达到最大循环次数，部分结果已保存。”提示；聊天页已有 `done.note` 暖色横幅处理，无需新增前端代码。
+- 新增回归测试，通过将上限下调至两轮验证：不会发起额外模型请求、会写入摘要，且 `done` 包含降级提示。
+- 更改的文件：`backend/app/services/agent_loop.py`、`backend/tests/test_chat_send_api.py`、`scripts/ralph/progress.txt`。
+- 质量检查：`cd backend && uv run pytest -q`（132 passed）、`uv run mypy app`（Success）；`cd frontend && npm run typecheck && npm run lint` 通过。
+- **未来迭代的学习：**
+  - 降级摘要应从 JSONL 中已持久化的 `tool_call` 事件构建，而不是依赖未落盘的内存变量，才能准确反映可恢复的执行进度。
+  - 上限行为测试可 monkeypatch `MAX_TOOL_ROUNDS` 为较小值，并提供等量工具调用 mock，避免构造 50 轮冗长夹具。
 ---

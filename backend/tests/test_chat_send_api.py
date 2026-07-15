@@ -25,7 +25,7 @@ import keyring.backend
 import keyring.backends.fail
 from fastapi.testclient import TestClient
 
-from app.core.config import MODELS_FILE, TOOLS_FILE
+from app.core.config import CONVERSATIONS_DIR, MODELS_FILE, TOOLS_FILE
 from app.main import create_app
 from app.services import agents_store, conversations_store, models_store
 from app.services.agents_store import AGENTS_FILE
@@ -554,6 +554,50 @@ def test_intermediate_tool_round_text_is_thinking_and_persisted() -> None:
         assert detail is not None
         thinking = next(event for event in detail["events"] if event["type"] == "thinking")
         assert thinking["data"]["text"] == "先检查文件"
+
+
+def test_tool_round_limit_saves_degradation_summary(monkeypatch: Any) -> None:
+    """The cap stops further model calls and saves completed work to outputs/."""
+    from app.services import agent_loop
+
+    _install_memory_keyring()
+    _reset_all()
+    monkeypatch.setattr(agent_loop, "MAX_TOOL_ROUNDS", 2)
+    with TestClient(create_app()) as client:
+        model_id = _create_model(client)
+        agent = _attach_model_to_default(client, model_id)
+        conv_id = _create_conversation(client)
+        mock_stream = _stream_mock([
+            _make_stream_response(
+                _tool_call_chunks("read_file", {"path": "missing-one.txt"}, "call_1")
+            ),
+            _make_stream_response(
+                _tool_call_chunks("read_file", {"path": "missing-two.txt"}, "call_2")
+            ),
+        ])
+        with patch("httpx.AsyncClient.stream", mock_stream):
+            response = client.post(
+                "/api/chat/send",
+                json={
+                    "conversation_id": conv_id,
+                    "message": "持续读取文件",
+                    "agent_id": agent["id"],
+                },
+            )
+
+    events = _sse_chunks(response)
+    assert events[-1] == {
+        "event": "done",
+        "data": {"note": "已达到最大循环次数，部分结果已保存。"},
+    }
+    assert mock_stream.call_count == 2
+    summary = (
+        CONVERSATIONS_DIR / conv_id / "outputs" / "_degradation_summary.md"
+    ).read_text(encoding="utf-8")
+    assert "## 已完成步骤" in summary
+    assert "1. read_file" in summary
+    assert "2. read_file" in summary
+    assert "## 未完成步骤" in summary
 
 
 def test_skill_call_is_dispatched_and_keeps_skill_type(tmp_path: Any) -> None:
