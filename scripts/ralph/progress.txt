@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- 动态系统提示词应放在独立的 service 中，并由 Agent Loop 在每个请求前以实际 `conversation_id` 组装；路径常量通过 `app.core.config` 注入，便于单元测试替换记忆文件。
 - 后端使用 `uv` 管理依赖，开发命令 `cd backend && uv sync --extra dev`；启动 `uv run uvicorn app.main:app --reload --port 8000`
 - 后端路径解析基于 `app/core/config.py` 中的 `PROJECT_ROOT`（`Path(__file__).resolve().parents[3]`），所有 workspace 路径常量集中在此
 - workspace 目录在运行时通过 `app/core/workspace.py` 的 `ensure_workspace()` 自初始化（lifespan 事件触发），无需手工创建或提交 runtime 文件
@@ -525,4 +526,13 @@
 - **未来迭代的学习：**
   - `scripts/ralph/us017_sse_mock.py` 提供最小 OpenAI `chat/completions` 流式协议，可配合环境变量引用的临时模型验证工具循环，无需写入真实密钥。
   - 浏览器自动化运行在隔离网络命名空间时，即使 shell `curl` 可访问本机端口，Chromium 也可能无法访问；应改在同一网络命名空间启动服务或使用可连接的浏览器环境。
+---
+## 2026-07-16 00:40 - US-018
+- 实现系统提示词动态组装：合并 Agent 的 `agent.md`、`workspace/memory.md` 的长期记忆、save_memory/search_memory 使用规则，以及当前会话 outputs 目录的绝对路径。
+- 缺少或为空的长期记忆文件均按空内容处理；Agent Loop 现会在每个模型请求前使用当前会话 ID 生成系统提示词。
+- 更改的文件：`backend/app/services/system_prompt.py`、`backend/app/services/agent_loop.py`、`backend/tests/test_system_prompt.py`、`scripts/ralph/progress.txt`。
+- 质量检查：`cd backend && uv run pytest`（125 passed）；`cd backend && uv run mypy app`（Success: no issues found in 33 source files）。
+- **未来迭代的学习：**
+  - 动态上下文应由独立的纯组装 service 处理，避免将文件读取和路径规则耦合到流式 Agent Loop。
+  - 在测试中替换模块级路径常量时，读取函数不要通过默认参数捕获该常量，否则 monkeypatch 不会生效。
 ---

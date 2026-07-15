@@ -35,12 +35,12 @@ from typing import Any
 
 import httpx
 
-from app.core.config import WORKSPACE_DIR
 from app.schemas.tool import SecurityBlockedError
 from app.services import conversations_store, sse_events, tool_functions
 from app.services.agents_store import get_agent, read_agent_md
 from app.services.model_tester import _build_chat_url, _resolve_api_key
 from app.services.models_store import get_model
+from app.services.system_prompt import build_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -219,21 +219,6 @@ def _finish_reason(chunk: dict[str, Any]) -> str | None:
     return None
 
 
-def _system_prompt(agent_md: str) -> str:
-    """Assemble the system prompt.
-
-    US-016 keeps this minimal: the agent.md content plus a short note about
-    the outputs directory. Full memory/skill/path-rule injection is US-018.
-    """
-    outputs_abs = WORKSPACE_DIR / "conversations" / "{conversation_id}" / "outputs"
-    note = (
-        "\n\n# 文件写入路径说明\n"
-        "通过 write_file 写入产出文件时，请使用绝对路径前缀："
-        f"{outputs_abs}\n（将 {{conversation_id}} 替换为当前会话 id）。\n"
-    )
-    return f"{agent_md}{note}"
-
-
 async def _stream_model(
     client: httpx.AsyncClient,
     url: str,
@@ -307,7 +292,7 @@ async def run_agent_loop(
         return
 
     agent_md = read_agent_md(agent_id) or ""
-    system = _system_prompt(agent_md)
+    system = build_system_prompt(agent_md, conversation_id)
     tools = _build_tool_definitions(agent)
 
     # ── Build message history from persisted JSONL ───────────────────────
