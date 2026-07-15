@@ -451,5 +451,17 @@
   - US-016 的 SSE 端点已完成；`workflowMode` 未设置 → 默认 `develop_and_validate`，本轮不在 Developer 阶段置 `passes=true`，交由 Validator 验证
   - 断连检测是双重保险：`_sse_stream` 主循环轮询 + `agent_loop` 每轮校验 + 写已关闭连接会抛异常，三条路径任一触发即终止
   - 心跳与 Agent 事件通过 `asyncio.Queue` 解耦：`heartbeat_producer` 周期入队，主生成器在 1s 超时窗口内 drain，模型长耗时轮次期间也能发心跳
-  - Agent Loop 工具调用采用 `index` 累积合并 delta（`_merge_tool_call_deltas`），下一轮请求的 assistant 消息必须携带 OpenAI wire-shape 的 `tool_calls`（arguments 为 JSON 字符串）
+- Agent Loop 工具调用采用 `index` 累积合并 delta（`_merge_tool_call_deltas`），下一轮请求的 assistant 消息必须携带 OpenAI wire-shape 的 `tool_calls`（arguments 为 JSON 字符串）
+---
+
+## 2026-07-15 23:10 - US-017
+- 完善已落地的 SSE 聊天前端：将流式 thinking、content 与工具调用统一保存为到达顺序的事件序列，避免原先按类型分组渲染时把工具卡片与回复段落重排。
+  - 连续 thinking/content 分片仍会合并为同一块，避免逐 token 生成大量 DOM 节点。
+  - `tool_result` 按 tool call id 回填至既有工具卡片；较长结果维持折叠/展开行为。
+- 更改的文件：`frontend/src/pages/ChatPage.tsx`、`scripts/ralph/progress.txt`
+- 质量检查：`npm run typecheck`、`npm run lint`、`npm run build` 通过。
+- 浏览器验证（agent-browser @ `http://localhost:5183/chat`）：模拟 `/api/chat/send` 的 SSE 分片后，依次展示用户消息 → `Agent 思考中…` → 首段回复 → `read_file` 工具卡片及 `workspace/real.txt` 参数 → 折叠的七行返回结果 → 工具后的继续回复；顺序正确。实际本地 Agent 未关联可用模型，真实模型工具调用需在配置模型后复验。
+- **未来迭代的学习：**
+  - 流式 UI 不应分别存 thinking/content/tools 后按类型渲染；应保留到达顺序并仅合并相邻同类文本分片，才能同时满足逐字更新与工具过程时序。
+  - 对会在后续事件中更新的工具卡片，使用稳定的 tool call id 在事件序列中原位更新结果，避免新增结果行破坏时间顺序。
 ---

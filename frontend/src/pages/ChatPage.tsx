@@ -65,6 +65,18 @@ interface WireToolCall {
   function: { name: string; arguments: string }
 }
 
+type StreamingItem =
+  | { kind: 'thinking'; text: string }
+  | { kind: 'content'; text: string }
+  | {
+      kind: 'tool'
+      id: string
+      name: string
+      args: unknown
+      result?: string
+      ok?: boolean
+    }
+
 // 会话详情（GET /api/conversations/{id}）
 interface ConversationDetail extends ConversationSummary {
   events: ConversationEvent[]
@@ -376,17 +388,7 @@ export default function ChatPage() {
   const [agents, setAgents] = useState<AgentSummary[]>([])
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
 
-  // SSE 临时缓冲：流式期间尚未提交为持久事件的中间状态。
-  // - streamingThinking：累计的 thinking 文本（推理过程）
-  // - streamingContent：累计的 content 文本（逐字流式回复）
-  // - streamingTools：按 tool_call_id 索引的工具卡片（含名称/参数/结果）
-  const [streamingThinking, setStreamingThinking] = useState('')
-  const [streamingContent, setStreamingContent] = useState('')
-  const [streamingTools, setStreamingTools] = useState<
-    Record<string, { name: string; args: unknown; result?: string; ok?: boolean }>
-  >({})
-  // 工具卡片按到达顺序展示
-  const [streamingToolOrder, setStreamingToolOrder] = useState<string[]>([])
+  const [streamingItems, setStreamingItems] = useState<StreamingItem[]>([])
 
   // SSE 中止控制器（切换会话/卸载时取消进行中的流）
   const abortRef = useRef<AbortController | null>(null)
@@ -521,10 +523,7 @@ export default function ChatPage() {
   useEffect(() => {
     abortRef.current?.abort()
     abortRef.current = null
-    setStreamingThinking('')
-    setStreamingContent('')
-    setStreamingTools({})
-    setStreamingToolOrder([])
+    setStreamingItems([])
   }, [selectedId])
 
   // ── 输出文件面板 ──────────────────────────────────────────────────────────
@@ -589,9 +588,7 @@ export default function ChatPage() {
   }, [
     detail?.events.length,
     isThinking,
-    streamingContent,
-    streamingThinking,
-    streamingToolOrder.length,
+    streamingItems,
   ])
 
   // ── 新建会话 ────────────────────────────────────────────────────────────
@@ -756,10 +753,7 @@ export default function ChatPage() {
     setInputText('')
 
     // 重置流式缓冲，进入思考态
-    setStreamingThinking('')
-    setStreamingContent('')
-    setStreamingTools({})
-    setStreamingToolOrder([])
+    setStreamingItems([])
     setIsThinking(true)
     setPageError('')
     setInfoNotice('')
@@ -797,10 +791,7 @@ export default function ChatPage() {
         if (abortRef.current === controller) {
           abortRef.current = null
           setIsThinking(false)
-          setStreamingThinking('')
-          setStreamingContent('')
-          setStreamingTools({})
-          setStreamingToolOrder([])
+          setStreamingItems([])
         }
       }
     })()
@@ -812,29 +803,40 @@ export default function ChatPage() {
     switch (evt.event) {
       case 'thinking': {
         const t = (data.text as string) || ''
-        setStreamingThinking((prev) => prev + t)
+        setStreamingItems((items) => {
+          const last = items.at(-1)
+          if (last?.kind === 'thinking') {
+            return [...items.slice(0, -1), { kind: 'thinking', text: last.text + t }]
+          }
+          return [...items, { kind: 'thinking', text: t }]
+        })
         break
       }
       case 'content': {
         const t = (data.text as string) || ''
-        setStreamingContent((prev) => prev + t)
+        setStreamingItems((items) => {
+          const last = items.at(-1)
+          if (last?.kind === 'content') {
+            return [...items.slice(0, -1), { kind: 'content', text: last.text + t }]
+          }
+          return [...items, { kind: 'content', text: t }]
+        })
         break
       }
       case 'tool_call': {
         const id = (data.id as string) || ''
         const name = (data.name as string) || '工具'
         const args = data.arguments
-        setStreamingTools((prev) => {
-          if (!prev[id]) {
-            setStreamingToolOrder((order) =>
-              order.includes(id) ? order : [...order, id],
-            )
-          }
-          const existing = prev[id]
-          return {
-            ...prev,
-            [id]: { name, args, result: existing?.result, ok: existing?.ok },
-          }
+        setStreamingItems((items) => {
+          const index = items.findIndex(
+            (item) => item.kind === 'tool' && item.id === id,
+          )
+          if (index === -1) return [...items, { kind: 'tool', id, name, args }]
+          const current = items[index]
+          if (current.kind !== 'tool') return items
+          const next = [...items]
+          next[index] = { ...current, name, args }
+          return next
         })
         break
       }
@@ -843,14 +845,18 @@ export default function ChatPage() {
         const name = (data.name as string) || '工具'
         const result = (data.result as string) ?? ''
         const ok = data.ok !== false
-        setStreamingTools((prev) => {
-          const existing = prev[id] || { name, args: undefined }
-          if (!prev[id]) {
-            setStreamingToolOrder((order) =>
-              order.includes(id) ? order : [...order, id],
-            )
+        setStreamingItems((items) => {
+          const index = items.findIndex(
+            (item) => item.kind === 'tool' && item.id === id,
+          )
+          if (index === -1) {
+            return [...items, { kind: 'tool', id, name, args: undefined, result, ok }]
           }
-          return { ...prev, [id]: { ...existing, name, result, ok } }
+          const current = items[index]
+          if (current.kind !== 'tool') return items
+          const next = [...items]
+          next[index] = { ...current, name, result, ok }
+          return next
         })
         break
       }
@@ -1250,74 +1256,53 @@ export default function ChatPage() {
                   {/* 流式期间：实时渲染 thinking / content / tool 卡片 */}
                   {isThinking && (
                     <>
-                      {/* thinking 事件：可折叠「Agent 思考中...」区域，与最终回复视觉区分 */}
-                      {streamingThinking && (
-                        <li className="flex justify-start">
-                          <div className="w-full max-w-[80%]">
-                            <CollapsibleBlock
-                              title={
-                                <span className="flex items-center gap-1.5">
-                                  <span className="flex items-end gap-0.5">
-                                    <span className="thinking-dot" />
-                                    <span
-                                      className="thinking-dot"
-                                      style={{ animationDelay: '0.15s' }}
-                                    />
-                                    <span
-                                      className="thinking-dot"
-                                      style={{ animationDelay: '0.3s' }}
-                                    />
-                                  </span>
-                                  Agent 思考中…
-                                </span>
-                              }
-                              collapsedNote={`${streamingThinking.length} 字推理`}
-                            >
-                              <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-warm-text-muted">
-                                {streamingThinking}
-                              </pre>
-                            </CollapsibleBlock>
-                          </div>
-                        </li>
-                      )}
-
-                      {/* tool_call/tool_result 事件：实时工具卡片（按到达顺序） */}
-                      {streamingToolOrder.map((tcId) => {
-                        const tool = streamingTools[tcId]
-                        if (!tool) return null
+                      {streamingItems.map((item, index) => {
+                        if (item.kind === 'thinking') {
+                          return (
+                            <li key={`stream-thinking-${index}`} className="flex justify-start">
+                              <div className="w-full max-w-[80%]">
+                                <CollapsibleBlock
+                                  title="Agent 思考中…"
+                                  collapsedNote={`${item.text.length} 字推理`}
+                                >
+                                  <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-warm-text-muted">
+                                    {item.text}
+                                  </pre>
+                                </CollapsibleBlock>
+                              </div>
+                            </li>
+                          )
+                        }
+                        if (item.kind === 'tool') {
+                          return (
+                            <li key={`stream-tool-${item.id}-${index}`} className="flex justify-start">
+                              <div className="w-full max-w-[80%]">
+                                <ToolCallCard
+                                  name={item.name}
+                                  argumentsObj={item.args}
+                                  result={item.result}
+                                  ok={item.ok}
+                                />
+                              </div>
+                            </li>
+                          )
+                        }
                         return (
-                          <li key={`stream-${tcId}`} className="flex justify-start">
-                            <div className="w-full max-w-[80%]">
-                              <ToolCallCard
-                                name={tool.name}
-                                argumentsObj={tool.args}
-                                result={tool.result}
-                                ok={tool.ok}
-                              />
+                          <li key={`stream-content-${index}`} className="flex justify-start">
+                            <div className="chat-bubble max-w-[80%] rounded-warm bg-warm-menu px-3 py-2 text-sm text-warm-text">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                {item.text}
+                              </ReactMarkdown>
                             </div>
                           </li>
                         )
                       })}
 
-                      {/* content 事件：逐字流式输出到 Agent 气泡 */}
-                      {streamingContent && (
+                      {streamingItems.length === 0 && (
                         <li className="flex justify-start">
-                          <div className="chat-bubble max-w-[80%] rounded-warm bg-warm-menu px-3 py-2 text-sm text-warm-text">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                              {streamingContent}
-                            </ReactMarkdown>
-                          </div>
+                          <ThinkingIndicator />
                         </li>
                       )}
-
-                      {/* 无任何流式内容时：显示「正在思考...」跳动点动画 */}
-                      {!streamingThinking &&
-                        streamingToolOrder.length === 0 &&
-                        !streamingContent && (
-                          <li className="flex justify-start">
-                            <ThinkingIndicator />
-                          </li>
-                        )}
                     </>
                   )}
                 </ul>
