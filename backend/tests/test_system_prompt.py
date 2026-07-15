@@ -35,6 +35,7 @@ def test_build_system_prompt_allows_missing_memory_file(
     prompt = system_prompt.build_system_prompt("Agent", "conversation-123")
 
     assert "# Long-term Memory\n\n# Memory 使用规则" in prompt
+    assert memory_file.exists()
 
 
 def test_build_system_prompt_allows_empty_memory_file(

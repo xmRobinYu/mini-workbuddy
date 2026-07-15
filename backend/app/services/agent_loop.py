@@ -113,7 +113,7 @@ def _save_degradation_summary(conversation_id: str) -> None:
 
 
 def _build_tool_definitions(agent: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return the OpenAI ``tools`` array for the Agent's enabled built-ins.
+    """Return the OpenAI ``tools`` array for an Agent's available tools.
 
     Disabled tools are excluded.  The OpenAI wire protocol requires
     ``type: function`` here; completed calls are normalised to ``type: tool``
@@ -145,6 +145,26 @@ def _build_tool_definitions(agent: dict[str, Any]) -> list[dict[str, Any]]:
             },
             "required": ["command"],
         },
+        "save_memory": {
+            "type": "object",
+            "properties": {
+                "type": {"type": "string", "enum": ["long_term", "short_term"]},
+                "content": {"type": "string", "description": "要保存的记忆内容"},
+            },
+            "required": ["type", "content"],
+        },
+        "search_memory": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "用于检索记忆的关键词"},
+                "type": {
+                    "type": "string",
+                    "enum": ["long_term", "short_term", "all"],
+                    "default": "all",
+                },
+            },
+            "required": ["query"],
+        },
     }
     definitions: list[dict[str, Any]] = []
     for name in agent.get("tools", []):
@@ -162,6 +182,26 @@ def _build_tool_definitions(agent: dict[str, Any]) -> list[dict[str, Any]]:
                 },
             }
         )
+    definitions.extend(
+        [
+            {
+                "type": "function",
+                "function": {
+                    "name": "save_memory",
+                    "description": "保存长期或当天短期记忆；所有 Agent 始终可用",
+                    "parameters": schemas["save_memory"],
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_memory",
+                    "description": "按关键词检索长期和短期记忆；所有 Agent 始终可用",
+                    "parameters": schemas["search_memory"],
+                },
+            },
+        ]
+    )
     return definitions
 
 
@@ -220,6 +260,14 @@ def _execute_tool(name: str, arguments: dict[str, Any]) -> tuple[str, bool]:
                 arguments.get("command", ""),
                 arguments.get("working_dir"),
             )
+        elif name == "save_memory":
+            from app.services.memory_store import save_memory
+
+            result = save_memory(arguments.get("type", ""), arguments.get("content", ""))
+        elif name == "search_memory":
+            from app.services.memory_store import search_memory
+
+            result = search_memory(arguments.get("query", ""), arguments.get("type", "all"))
         else:
             return f"未知工具：{name}", False
     except SecurityBlockedError as exc:
@@ -487,6 +535,10 @@ async def run_agent_loop(
                 "客户端断开连接，终止 Agent Loop（会话 %s）", conversation_id
             )
             return
+
+        # Refresh memory before every model request so a save_memory call in
+        # an earlier round is immediately visible in the next round.
+        messages[0]["content"] = build_system_prompt(agent_md, conversation_id)
 
         payload: dict[str, Any] = {
             "model": model_name,

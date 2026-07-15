@@ -10,8 +10,10 @@ MEMORY_FILE = WORKSPACE_DIR / "memory.md"
 
 
 def _read_long_term_memory() -> str:
-    """Read long-term memory, treating a missing file as empty content."""
+    """Read long-term memory, creating an empty file when it is missing."""
     if not MEMORY_FILE.exists():
+        MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        MEMORY_FILE.touch()
         return ""
     return MEMORY_FILE.read_text(encoding="utf-8")
 

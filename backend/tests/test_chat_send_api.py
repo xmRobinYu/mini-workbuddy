@@ -702,6 +702,54 @@ def test_disabled_tool_excluded_from_request() -> None:
         assert "read_file" in tool_names
         assert "write_file" in tool_names
         assert "execute_command" not in tool_names
+        assert "save_memory" in tool_names
+        assert "search_memory" in tool_names
+
+
+def test_memory_tools_are_dispatched_and_prompt_refreshes_each_round(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
+    """Memory tools are always exposed and saved long-term memory is refreshed."""
+    from app.services import agent_loop, memory_store, system_prompt
+
+    memory_file = tmp_path / "memory.md"
+    monkeypatch.setattr(memory_store, "LONG_TERM_MEMORY_FILE", memory_file)
+    monkeypatch.setattr(memory_store, "MEMORY_DIR", tmp_path / "memory")
+    monkeypatch.setattr(memory_store, "MEMORY_LOCK_FILE", tmp_path / "memory.lock")
+    monkeypatch.setattr(system_prompt, "MEMORY_FILE", memory_file)
+    captured_system_prompts: list[str] = []
+
+    _install_memory_keyring()
+    _reset_all()
+    with TestClient(create_app()) as client:
+        model_id = _create_model(client)
+        agent = _attach_model_to_default(client, model_id)
+        conv_id = _create_conversation(client)
+        responses = [
+            _make_stream_response(
+                _tool_call_chunks("save_memory", {"type": "long_term", "content": "用户偏好中文"})
+            ),
+            _make_stream_response(_content_chunks("已记录")),
+        ]
+
+        def _capture_stream(*_args: Any, **kwargs: Any) -> _FakeStreamContext:
+            captured_system_prompts.append(kwargs["json"]["messages"][0]["content"])
+            return _FakeStreamContext(responses.pop(0))
+
+        with patch("httpx.AsyncClient.stream", MagicMock(side_effect=_capture_stream)):
+            response = client.post(
+                "/api/chat/send",
+                json={"conversation_id": conv_id, "message": "记住偏好", "agent_id": agent["id"]},
+            )
+
+    assert response.status_code == 200
+    assert memory_file.read_text(encoding="utf-8") == "用户偏好中文\n"
+    assert "用户偏好中文" not in captured_system_prompts[0]
+    assert "用户偏好中文" in captured_system_prompts[1]
+    detail = conversations_store.get_conversation(conv_id)
+    assert detail is not None
+    result = next(event for event in detail["events"] if event["role"] == "tool")
+    assert result["data"]["name"] == "save_memory"
 
 def test_thinking_event_type_is_available() -> None:
     """The ``thinking`` event helper is wired and serialises correctly."""

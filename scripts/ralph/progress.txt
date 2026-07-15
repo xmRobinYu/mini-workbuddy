@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- 系统强制可用的工具应由 Agent Loop 在构建模型函数定义时固定注入，不应加入 `BUILTIN_TOOL_NAMES` 或 `tools.json`，这样工具管理和 Agent 配置不会暴露禁用入口。
 - Agent Loop 达到固定轮数上限时，可基于已持久化的 `tool_call` 事件生成降级摘要；这样中间结果与 JSONL 的权威执行记录保持一致。
 - 对 OpenAI 兼容接口，出站 `tool_calls` 必须保持 `type: "function"`；业务层的 `tool`/`skill` 区分应在持久化和分发层保留，避免破坏模型协议。
 - 仅供 UI 恢复的 assistant `thinking` 事件不应重复注入后续模型上下文；关联的 tool-call assistant 消息才是模型上下文的权威记录。
@@ -583,4 +584,16 @@
 - **未来迭代的学习：**
   - 降级摘要应从 JSONL 中已持久化的 `tool_call` 事件构建，而不是依赖未落盘的内存变量，才能准确反映可恢复的执行进度。
   - 上限行为测试可 monkeypatch `MAX_TOOL_ROUNDS` 为较小值，并提供等量工具调用 mock，避免构造 50 轮冗长夹具。
+---
+
+## 2026-07-16 01:00 - US-022
+- 实现了系统内置 `save_memory` / `search_memory`：所有 Agent 均自动获得，且不进入工具管理或 Agent 的可配置工具集合。
+  - 长期记忆追加写入 `workspace/memory.md`，短期记忆按当天日期写入 `workspace/memory/YYYY-MM-DD.md`；缺失的目录和文件会自动创建。
+  - 关键词检索覆盖长期、短期或指定类型记忆，按匹配次数排序，返回匹配行及相邻上下文，最多 10 条。
+  - Agent Loop 在每轮模型请求前刷新系统提示词，因此同一工具循环内新保存的长期记忆会立即注入下一轮。
+- 更改的文件：`backend/app/services/memory_store.py`、`backend/app/services/agent_loop.py`、`backend/app/services/system_prompt.py`、`backend/tests/test_memory_store.py`、`backend/tests/test_system_prompt.py`、`backend/tests/test_chat_send_api.py`、`scripts/ralph/progress.txt`。
+- 质量检查：`cd backend && uv run pytest tests/test_memory_store.py tests/test_system_prompt.py tests/test_chat_send_api.py -q`（20 passed）、`uv run mypy app`（Success: 34 source files）、`uv run pytest -q`（136 passed）。
+- **未来迭代的学习：**
+  - 系统强制可用工具应在 `_build_tool_definitions` 直接追加，不能放入 `BUILTIN_TOOL_NAMES`，否则会意外出现在工具管理和 Agent 配置 UI。
+  - 每轮模型请求前更新 `messages[0]` 的系统提示词，可使本轮工具新写入的动态上下文在下一轮立即生效，同时保留已有会话消息。
 ---
