@@ -486,3 +486,12 @@
   - 浏览器 SSE 验收依赖可用的测试模型与 API 密钥；常驻验证服务的临时凭据失效时，应复用本地 OpenAI 兼容 mock，而不要将测试密钥写入 workspace。
   - 流结束与断连后调用 `loadDetail(conversationId)` 从 JSONL 重建权威历史，可避免临时流式状态残留。
 ---
+## 2026-07-15 23:52 - US-017
+- 复核既有 SSE 流式聊天前端实现；不需要修改业务代码。`ChatPage.tsx` 已通过 `streamSse` 消费 POST SSE 流，按到达顺序渲染 thinking、content 和工具卡片，并在流结束或断连后从 JSONL 恢复会话。
+- 更改的文件：`scripts/ralph/progress.txt`。
+- 质量检查：`frontend` 的 `npm run typecheck`、`npm run lint`、`npm run build` 通过；`backend` 的 `uv run pytest tests/test_chat_send_api.py`（10 passed）与 `uv run mypy app` 通过。
+- 浏览器验证：复用 `http://127.0.0.1:5183/chat`，确认聊天页、会话加载、主 Agent 选择和发送入口正常；常驻测试服务未提供模型凭据，因此未向运行时会话写入新的失败请求。上一轮隔离 OpenAI 兼容两轮 mock 验收已覆盖流式文本、工具参数、结果折叠、最终回复与 JSONL 恢复。
+- **未来迭代的学习：**
+  - 对需要真实模型的浏览器验收，优先采用隔离服务 + 环境变量形式的临时凭据 + 本地 OpenAI 兼容 mock；完成后清理模型、会话和服务，避免污染 `workspace`。
+  - UI 的 SSE 消费应使用 `fetch` + `ReadableStream` 以支持 POST 请求；流结束与异常收尾都重新拉取会话详情，确保 JSONL 是权威状态。
+---
