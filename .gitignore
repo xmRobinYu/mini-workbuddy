@@ -6,6 +6,9 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+.env
+backend/.env
+config/application.yml
 venv/
 
 # Ralph state

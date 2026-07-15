@@ -1,0 +1,13 @@
+# Spring AI reusable template. Copy to config/application.yml; do not commit it.
+spring:
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY}
+      base-url: https://aiapi.enzebaba.top
+      chat:
+        options:
+          model: gpt-5-nano
+    alibaba:
+      toolcalling:
+        tavilysearch:
+          api-key: ${TAVILY_API_KEY}
