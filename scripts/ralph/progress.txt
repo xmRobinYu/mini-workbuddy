@@ -409,3 +409,12 @@
   - `run_agent_loop` 的 `_system_prompt` 含 outputs 路径说明（`{conversation_id}` 占位），完整记忆/技能/路径规则注入留给 US-018+，本 story 保持最小化
   - Ralph supervisor 改动（`_run_supervisor` + `_supervised_child_args` + `ralph_service.sh`）属本次 working tree 提交物，已一并提交；新增 `SUPERVISOR_RESTART_DELAY_SECONDS=5`，异常退出后自动重启，正常退出（exit 0）则停止
 ---
+
+## 2026-07-15 08:30 - US-016
+- 复核已提交的 SSE 流式发送消息后端端点（commit `cad24bb`）；work package 无 Validator 失败备注（notes 为空），currentPhase=develop，无需修改源代码。
+- 更改的文件：scripts/ralph/progress.txt（追加复核记录）
+- 质量检查：`uv run mypy app` Success（32 source files）；`uv run pytest` 122 passed
+- **未来迭代的学习：**
+  - 与 US-014 同型场景：RALPH_STORY_ID 指向已实现提交、passes=false 且 notes 为空、currentPhase=develop 的 story，属 develop_and_validate 模式的 develop 阶段已完成、等待 Validator；只复跑质量检查确认绿色，不重新实现、不提前置 passes=true（违反 workflowMode 规则）
+  - SSE /chat/send 端点与 agent_loop 的 mock 流式测试（`test_chat_send_api.py`）已覆盖 content/done/error/tool_call/tool_result/JSONL 持久化/参数校验/禁用工具排除，质量检查无需改动即可保持 122 passed
+---
