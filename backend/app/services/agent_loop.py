@@ -53,8 +53,8 @@ MAX_TOOL_ROUNDS = 50
 HEARTBEAT_INTERVAL = sse_events.HEARTBEAT_SECONDS
 
 # Sensible defaults for the streaming model call.
-MODEL_STREAM_TIMEOUT = 120.0
-MODEL_READ_TIMEOUT = 60.0
+MODEL_STREAM_TIMEOUT = 300.0
+MODEL_READ_TIMEOUT = 180.0
 
 
 class AgentLoopError(Exception):

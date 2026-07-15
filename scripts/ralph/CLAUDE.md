@@ -10,7 +10,7 @@
 ## 你的任务
 
 1. 读取当前 story 的 work package：`python scripts/ralph/prd_tool.py get-work-package <STORY_ID>`
-2. 读取 `progress.txt` 中的进度日志（首先检查 Codebase Patterns 部分）
+2. 读取 `progress.txt` 中的进度日志：只读取开头的 `Codebase Patterns` 和末尾最近 200 行；不要整文件加载，除非当前 story 的失败备注明确引用了更早记录
 3. 检查你是否在 PRD 中 `branchName` 指定的正确 branch 上。如果不是，checkout 或从 main 创建它。
 4. 先检查环境变量 `RALPH_STORY_ID`：
    - 如果已设置，必须只处理该 story，禁止改动或重写其他 story 的 `passes`、`notes`、`retryCount`、`blocked`

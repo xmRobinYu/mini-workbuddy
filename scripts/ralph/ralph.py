@@ -115,7 +115,9 @@ RUNTIME_PRD_FILE = config.get_runtime_prd_file(PRD_FILE)
 STATE_DB_FILE = config.get_state_db_file(PRD_FILE)
 RALPH_AGENT_FILE = SCRIPT_DIR / "ralph-agent.json"
 DASHBOARD_PORT = int(os.environ.get("RALPH_DASHBOARD_PORT", "7334"))
-RUNTIME_DIR = Path(os.environ.get("RALPH_RUNTIME_DIR", Path.home() / "logs" / "skillhub")).resolve()
+RUNTIME_DIR = Path(
+    os.environ.get("RALPH_RUNTIME_DIR", Path.home() / "logs" / PROJECT_ROOT.name)
+).resolve()
 PID_FILE = RUNTIME_DIR / "ralph.pid"
 LOG_FILE = RUNTIME_DIR / "ralph.log"
 SUPERVISOR_PID_FILE = RUNTIME_DIR / "ralph-supervisor.pid"
@@ -137,6 +139,7 @@ class ChildProcessResult:
     exit_code: int | None = None
     timed_out: bool = False
     resolved_externally: bool = False
+    context_limit_exceeded: bool = False
 
 
 def _ensure_runtime_dir() -> None:
@@ -357,10 +360,23 @@ def _terminate_child_process(process: subprocess.Popen, label: str) -> None:
         process.wait()
 
 
+def _relay_claude_output(process: subprocess.Popen, context_limit_event: threading.Event) -> None:
+    if process.stdout is None:
+        return
+
+    for line in process.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        normalized = line.lower()
+        if "context length" in normalized and "exceeds limit" in normalized:
+            context_limit_event.set()
+
+
 def _wait_for_child_process(process: subprocess.Popen,
                             label: str,
                             timeout_seconds: int,
-                            story_id: str | None = None) -> ChildProcessResult:
+                            story_id: str | None = None,
+                            context_limit_event: threading.Event | None = None) -> ChildProcessResult:
     """
     等待子进程结束。
     返回值：是否超时。
@@ -371,6 +387,15 @@ def _wait_for_child_process(process: subprocess.Popen,
     start_time = time.time()
 
     while True:
+        if context_limit_event is not None and context_limit_event.is_set():
+            print(f"\n⚠️  {label} 上下文超限，终止当前 Agent 并在下一轮重新创建")
+            if process.poll() is None:
+                _terminate_child_process(process, label)
+            return ChildProcessResult(
+                exit_code=process.returncode,
+                context_limit_exceeded=True,
+            )
+
         ret_code = process.poll()
         if ret_code is not None:
             if ret_code == 0:
@@ -492,12 +517,27 @@ def run_developer(iteration: int, story_id: str | None) -> ChildProcessResult:
         env["RALPH_STORY_ID"] = story_id
 
     try:
-        process = subprocess.Popen(
-            cmd,
-            cwd=str(PROJECT_ROOT),
-            stdin=subprocess.PIPE if stdin_data is not None else None,
-            env=env,
-        )
+        context_limit_event = threading.Event()
+        popen_kwargs = {
+            "cwd": str(PROJECT_ROOT),
+            "stdin": subprocess.PIPE if stdin_data is not None else None,
+            "env": env,
+        }
+        if AGENT == "claude":
+            popen_kwargs.update(
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        process = subprocess.Popen(cmd, **popen_kwargs)
+
+        if AGENT == "claude":
+            threading.Thread(
+                target=_relay_claude_output,
+                args=(process, context_limit_event),
+                daemon=True,
+            ).start()
 
         if stdin_data is not None:
             def write_stdin():
@@ -512,6 +552,7 @@ def run_developer(iteration: int, story_id: str | None) -> ChildProcessResult:
             "开发 Agent",
             TIMEOUT_SECONDS,
             story_id=story_id,
+            context_limit_event=context_limit_event,
         )
         if result.timed_out:
             print("   进程已终止，将在下一次迭代重试")
@@ -860,6 +901,24 @@ def main():
                     )
                     dashboard.set_state(iteration=i, phase="developing", current_story=current_story)
                     developer_result = run_developer(i, current_story)
+                    if developer_result.context_limit_exceeded:
+                        state_store.record_run_event(
+                            current_story,
+                            phase="develop",
+                            status="context_limit",
+                            message="Claude 上下文超限，已终止当前 Agent 并将在下一轮重新创建。",
+                            db_path=STATE_DB_FILE,
+                        )
+                        state_store.mark_story_phase_finished(
+                            current_story,
+                            prd_path=PRD_FILE,
+                            db_path=STATE_DB_FILE,
+                            runtime_prd_path=RUNTIME_PRD_FILE,
+                        )
+                        _set_dashboard_idle()
+                        print("⏭️  开发 Agent 上下文超限，下一次迭代将使用新的 Claude Agent 重试...")
+                        time.sleep(2)
+                        continue
                     if developer_result.timed_out:
                         state_store.mark_story_phase_finished(
                             current_story,

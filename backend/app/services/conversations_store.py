@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import uuid
 from pathlib import Path
@@ -267,10 +268,19 @@ def append_event(conversation_id: str, event: dict[str, Any]) -> dict[str, Any]:
     jsonl = _jsonl_path(conversation_id)
     lock = FileLock(str(_lock_path(conversation_id)))
     with lock:
-        # Append one JSON object per line (UTF-8, no trailing separator issues).
-        with jsonl.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(event, ensure_ascii=False))
-            fh.write("\n")
+        # Atomic append: read existing lines, append the new event, write to a
+        # sibling ``.tmp`` file then ``os.replace`` it over the real JSONL.
+        # A plain append-mode write could leave a half-written trailing line
+        # if the process is interrupted mid-``write``; the tmp+rename swap is
+        # atomic at the filesystem level so the JSONL is never observed in a
+        # torn state. (US-019 acceptance criterion.)
+        existing = ""
+        if jsonl.exists():
+            existing = jsonl.read_text(encoding="utf-8")
+        blob = existing + json.dumps(event, ensure_ascii=False) + "\n"
+        tmp_path = jsonl.with_suffix(jsonl.suffix + ".tmp")
+        tmp_path.write_text(blob, encoding="utf-8")
+        os.replace(tmp_path, jsonl)
         # Bump updated_at so list/search reflect the new activity.
         meta = _read_meta(conversation_id)
         if meta is not None:

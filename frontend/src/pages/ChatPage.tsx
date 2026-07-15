@@ -1,8 +1,12 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Bot,
+  ChevronDown,
+  ChevronRight,
   Download,
   Eye,
   FileText,
+  Info,
   LoaderCircle,
   MessageSquare,
   MoreVertical,
@@ -12,6 +16,7 @@ import {
   SendHorizontal,
   Trash2,
   Upload,
+  Wrench,
   X,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
@@ -24,6 +29,8 @@ import {
   apiPost,
   apiPut,
   apiUpload,
+  streamSse,
+  type SseEvent,
 } from '@/lib/api'
 
 // 会话摘要（与后端 ConversationSummary 对齐）
@@ -39,7 +46,23 @@ interface ConversationEvent {
   role?: string
   type?: string
   data?: { text?: string } & Record<string, unknown>
+  tool_call_id?: string
+  timestamp?: string
   [key: string]: unknown
+}
+
+// Agent 摘要（GET /api/agents 列表项子集，与 AgentRead 对齐）
+interface AgentSummary {
+  id: string
+  name: string
+  is_default: boolean
+}
+
+// OpenAI wire-shape 工具调用（与后端 agent_loop 的 wire_tool_calls 对齐）
+interface WireToolCall {
+  id: string
+  type: string
+  function: { name: string; arguments: string }
 }
 
 // 会话详情（GET /api/conversations/{id}）
@@ -93,6 +116,23 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : '操作失败，请稍后重试'
 }
 
+/**
+ * 在会话事件中查找某次 tool_call 对应的 tool_result 持久事件。
+ * 用于把历史 tool_call 卡片与其返回结果配对渲染（按 tool_call_id）。
+ */
+function findToolResult(
+  detail: ConversationDetail | null,
+  toolCallId: string,
+): ConversationEvent | undefined {
+  if (!detail || !toolCallId) return undefined
+  return detail.events.find(
+    (e) =>
+      e.role === 'tool' &&
+      e.type === 'tool_result' &&
+      e.tool_call_id === toolCallId,
+  )
+}
+
 /** 将 ISO-8601 UTC 时间格式化为简短的本地展示串。 */
 function formatTime(iso: string): string {
   if (!iso) return ''
@@ -121,6 +161,124 @@ function ThinkingIndicator() {
       </span>
     </div>
   )
+}
+
+/**
+ * 可折叠容器：用于 thinking 推理区与工具结果区。
+ * 标题行点击切换展开/收起；内容区默认收起。
+ */
+function CollapsibleBlock({
+  title,
+  collapsedNote,
+  children,
+  defaultOpen = false,
+}: {
+  title: React.ReactNode
+  collapsedNote?: string
+  children: React.ReactNode
+  defaultOpen?: boolean
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="rounded-warm border border-warm-border bg-white">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-xs font-medium text-warm-text-muted hover:bg-warm-border/30"
+      >
+        {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        <span className="min-w-0 flex-1 truncate">{title}</span>
+        {!open && collapsedNote && (
+          <span className="ml-2 truncate text-warm-text-muted/70">
+            {collapsedNote}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="border-t border-warm-border px-3 py-2">{children}</div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 工具调用卡片：展示工具/技能名称 + 传入参数，下方可挂载工具结果。
+ * tool_call 事件实时显示；tool_result 事件在对应工具下方展示返回结果，
+ * 较长的结果支持折叠/展开（默认收起，仅展示前几行预览）。
+ */
+const TOOL_RESULT_PREVIEW_LINES = 4
+const TOOL_RESULT_COLLAPSE_THRESHOLD = 6
+
+function ToolCallCard({
+  name,
+  argumentsObj,
+  result,
+  ok,
+}: {
+  name: string
+  argumentsObj: unknown
+  result?: string
+  ok?: boolean
+}) {
+  const argStr = formatToolArguments(argumentsObj)
+  const [expanded, setExpanded] = useState(false)
+  const lines = result ? result.split('\n') : []
+  const isLong = lines.length > TOOL_RESULT_COLLAPSE_THRESHOLD
+  const visibleResult = isLong && !expanded
+    ? lines.slice(0, TOOL_RESULT_PREVIEW_LINES).join('\n')
+    : result ?? ''
+
+  return (
+    <div className="rounded-warm border border-warm-border bg-warm-menu/60 px-3 py-2 text-xs">
+      <div className="flex items-center gap-1.5 font-medium text-warm-text">
+        <Wrench size={13} className="shrink-0 text-warm-amber" />
+        <span className="truncate">{name}</span>
+      </div>
+      {argStr && (
+        <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-warm-text-muted">
+          {argStr}
+        </pre>
+      )}
+      {result !== undefined && (
+        <div
+          className={`mt-2 border-t border-warm-border pt-2 ${
+            ok === false ? 'text-red-700' : 'text-warm-text-muted'
+          }`}
+        >
+          <div className="mb-1 flex items-center justify-between">
+            <span className="text-[11px] font-medium text-warm-text-muted">
+              {ok === false ? '执行失败' : '返回结果'}
+            </span>
+            {isLong && (
+              <button
+                type="button"
+                onClick={() => setExpanded((v) => !v)}
+                className="flex items-center gap-0.5 text-[11px] text-warm-orange hover:underline"
+              >
+                {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                {expanded ? '收起' : '展开全部'}
+              </button>
+            )}
+          </div>
+          <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed">
+            {visibleResult}
+            {!expanded && isLong ? '\n…' : ''}
+          </pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 把工具参数对象格式化为可读字符串。 */
+function formatToolArguments(args: unknown): string {
+  if (args == null) return ''
+  if (typeof args === 'string') return args
+  try {
+    return JSON.stringify(args, null, 2)
+  } catch {
+    return String(args)
+  }
 }
 
 /**
@@ -191,6 +349,8 @@ export default function ChatPage() {
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
   const [isLoadingList, setIsLoadingList] = useState(true)
   const [pageError, setPageError] = useState('')
+  // done 事件 note（如 50 轮降级提示）以暖色横幅展示，区别于红色错误条。
+  const [infoNotice, setInfoNotice] = useState('')
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detail, setDetail] = useState<ConversationDetail | null>(null)
@@ -211,6 +371,25 @@ export default function ChatPage() {
   const [inputText, setInputText] = useState('')
   // Agent 是否正在思考/回复中（发送按钮据此禁用）
   const [isThinking, setIsThinking] = useState(false)
+
+  // 可选 Agent 列表 + 当前选中的 Agent id（/api/chat/send 需要 agent_id）
+  const [agents, setAgents] = useState<AgentSummary[]>([])
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
+
+  // SSE 临时缓冲：流式期间尚未提交为持久事件的中间状态。
+  // - streamingThinking：累计的 thinking 文本（推理过程）
+  // - streamingContent：累计的 content 文本（逐字流式回复）
+  // - streamingTools：按 tool_call_id 索引的工具卡片（含名称/参数/结果）
+  const [streamingThinking, setStreamingThinking] = useState('')
+  const [streamingContent, setStreamingContent] = useState('')
+  const [streamingTools, setStreamingTools] = useState<
+    Record<string, { name: string; args: unknown; result?: string; ok?: boolean }>
+  >({})
+  // 工具卡片按到达顺序展示
+  const [streamingToolOrder, setStreamingToolOrder] = useState<string[]>([])
+
+  // SSE 中止控制器（切换会话/卸载时取消进行中的流）
+  const abortRef = useRef<AbortController | null>(null)
 
   // 文件上传：待上传的文件（聊天输入框附件）、上传状态与错误提示
   const [pendingFile, setPendingFile] = useState<File | null>(null)
@@ -246,6 +425,34 @@ export default function ChatPage() {
 
   useEffect(() => {
     void loadConversations()
+  }, [])
+
+  // 加载 Agent 列表，默认选中主 Agent（is_default）
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const data = await apiGet<AgentSummary[]>('/agents')
+        if (cancelled) return
+        // 主 Agent 置顶
+        const sorted = [...data].sort((a, b) => {
+          if (a.is_default) return -1
+          if (b.is_default) return 1
+          return 0
+        })
+        setAgents(sorted)
+        if (!selectedAgentId) {
+          const def = sorted.find((a) => a.is_default) ?? sorted[0]
+          setSelectedAgentId(def ? def.id : null)
+        }
+      } catch {
+        // Agent 列表加载失败不阻塞聊天；用户仍可发送（无 agent 时给出提示）
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // 搜索：关键词非空时调用搜索接口，否则回退到本地列表
@@ -309,6 +516,17 @@ export default function ChatPage() {
     }
   }, [selectedId])
 
+  // 切换/清空会话时：取消进行中的 SSE 流并清空临时缓冲，避免上一会话的
+  // 流式片段残留到新会话（断连后通过 loadDetail 从 JSONL 恢复权威状态）。
+  useEffect(() => {
+    abortRef.current?.abort()
+    abortRef.current = null
+    setStreamingThinking('')
+    setStreamingContent('')
+    setStreamingTools({})
+    setStreamingToolOrder([])
+  }, [selectedId])
+
   // ── 输出文件面板 ──────────────────────────────────────────────────────────
   const loadOutputs = async (id: string) => {
     setIsLoadingOutputs(true)
@@ -368,7 +586,13 @@ export default function ChatPage() {
   // 新消息或思考态变化时，滚动到底部
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [detail?.events.length, isThinking])
+  }, [
+    detail?.events.length,
+    isThinking,
+    streamingContent,
+    streamingThinking,
+    streamingToolOrder.length,
+  ])
 
   // ── 新建会话 ────────────────────────────────────────────────────────────
   const handleCreate = async () => {
@@ -509,16 +733,19 @@ export default function ChatPage() {
   }
 
   // ── 发送消息 ──────────────────────────────────────────────────────────────
-  // US-014 范围：渲染消息区 + Markdown + 输入框 + 思考动画。
-  // 真正的 SSE 流式回复端点 POST /api/chat/send 属于 US-016/US-017，尚未实现。
-  // 这里在本地把用户消息追加到当前会话的事件列表，进入「正在思考...」态，
-  // 随后用一条演示性 Markdown 回复展示渲染效果。等 SSE 端点落地后，
-  // 将下面的延迟模拟替换为 fetch streaming / EventSource 即可，UI 状态机保持不变。
+  // US-017：通过 fetch streaming 接收 /api/chat/send 的 SSE 事件。
+  // content 事件逐字流式追加到 Agent 气泡；thinking 事件作为可折叠推理区；
+  // tool_call/tool_result 事件实时显示工具卡片（名称+参数+结果）；
+  // 断连时由 loadDetail 从 JSONL 恢复权威会话状态。
   const handleSend = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const text = inputText.trim()
     // 未选中会话、空输入、或正在思考时不可发送
     if (!selectedId || !detail || !text || isThinking) return
+    if (!selectedAgentId) {
+      setPageError('请先选择一个 Agent 再发送消息')
+      return
+    }
 
     const userEvent: ConversationEvent = {
       role: 'user',
@@ -527,38 +754,121 @@ export default function ChatPage() {
     }
     setDetail({ ...detail, events: [...detail.events, userEvent] })
     setInputText('')
+
+    // 重置流式缓冲，进入思考态
+    setStreamingThinking('')
+    setStreamingContent('')
+    setStreamingTools({})
+    setStreamingToolOrder([])
     setIsThinking(true)
+    setPageError('')
+    setInfoNotice('')
 
-    const demoReply =
-      '好的，已为你整理会议纪要要点如下：\n\n' +
-      '## 会议纪要\n\n' +
-      '### 讨论议题\n\n' +
-      '- 产品 P0 范围与里程碑\n' +
-      '- 资源分配与风险评估\n\n' +
-      '### 关键结论\n\n' +
-      '| 事项 | 负责人 | 截止日期 |\n' +
-      '| --- | --- | --- |\n' +
-      '| 模型管理模块 | 张三 | 2026-07-20 |\n' +
-      '| Agent 管理模块 | 李四 | 2026-07-22 |\n\n' +
-      '### 示例代码\n\n' +
-      '```python\n' +
-      'def greet(name: str) -> str:\n' +
-      '    return f"你好，{name}！"\n' +
-      '```\n'
+    const conversationId = selectedId
+    const agentId = selectedAgentId
+    const controller = new AbortController()
+    abortRef.current = controller
 
-    // 模拟 Agent 思考 + 回复延迟（演示用途；SSE 接入后替换为流式接收）
-    window.setTimeout(() => {
-      setDetail((prev) => {
-        if (!prev) return prev
-        const assistantEvent: ConversationEvent = {
-          role: 'assistant',
-          type: 'message',
-          data: { text: demoReply },
+    void (async () => {
+      try {
+        await streamSse(
+          '/chat/send',
+          {
+            conversation_id: conversationId,
+            message: text,
+            agent_id: agentId,
+            uploaded_file_paths: undefined,
+          },
+          (evt: SseEvent) => handleSseEvent(evt),
+          controller.signal,
+        )
+        // 流正常结束：从 JSONL 恢复权威状态（含已落盘的 user/assistant/tool 事件）
+        await loadDetail(conversationId)
+      } catch (error) {
+        // 中止（切换会话）不算错误
+        if (controller.signal.aborted) return
+        // 网络断连等：从 JSONL 恢复已写记录，并提示可重连
+        setPageError(
+          `${errorMessage(error)}（已从历史记录恢复会话，可重新发送）`,
+        )
+        await loadDetail(conversationId)
+      } finally {
+        // 仅当这次请求仍是当前活跃流时才清理思考态
+        if (abortRef.current === controller) {
+          abortRef.current = null
+          setIsThinking(false)
+          setStreamingThinking('')
+          setStreamingContent('')
+          setStreamingTools({})
+          setStreamingToolOrder([])
         }
-        return { ...prev, events: [...prev.events, assistantEvent] }
-      })
-      setIsThinking(false)
-    }, 1200)
+      }
+    })()
+  }
+
+  /** 处理单个 SSE 事件，更新流式缓冲区。 */
+  const handleSseEvent = (evt: SseEvent) => {
+    const data = evt.data
+    switch (evt.event) {
+      case 'thinking': {
+        const t = (data.text as string) || ''
+        setStreamingThinking((prev) => prev + t)
+        break
+      }
+      case 'content': {
+        const t = (data.text as string) || ''
+        setStreamingContent((prev) => prev + t)
+        break
+      }
+      case 'tool_call': {
+        const id = (data.id as string) || ''
+        const name = (data.name as string) || '工具'
+        const args = data.arguments
+        setStreamingTools((prev) => {
+          if (!prev[id]) {
+            setStreamingToolOrder((order) =>
+              order.includes(id) ? order : [...order, id],
+            )
+          }
+          const existing = prev[id]
+          return {
+            ...prev,
+            [id]: { name, args, result: existing?.result, ok: existing?.ok },
+          }
+        })
+        break
+      }
+      case 'tool_result': {
+        const id = (data.id as string) || ''
+        const name = (data.name as string) || '工具'
+        const result = (data.result as string) ?? ''
+        const ok = data.ok !== false
+        setStreamingTools((prev) => {
+          const existing = prev[id] || { name, args: undefined }
+          if (!prev[id]) {
+            setStreamingToolOrder((order) =>
+              order.includes(id) ? order : [...order, id],
+            )
+          }
+          return { ...prev, [id]: { ...existing, name, result, ok } }
+        })
+        break
+      }
+      case 'error': {
+        const msg = (data.message as string) || 'Agent 执行出错'
+        setPageError(msg)
+        break
+      }
+      case 'done': {
+        // done 事件：流由 streamSse 自然结束，权威状态在 finally 里 loadDetail 恢复。
+        // note（如 50 轮降级提示）以暖色横幅展示给用户。
+        const note = (data.note as string) || ''
+        if (note) setInfoNotice(note)
+        break
+      }
+      default:
+        break
+    }
   }
 
   const hasConversation = Boolean(selectedId && detail)
@@ -754,15 +1064,51 @@ export default function ChatPage() {
           </div>
         ) : (
           <>
-            <header className="flex h-14 flex-shrink-0 items-center border-b border-warm-border px-6">
+            <header className="flex h-14 flex-shrink-0 items-center justify-between border-b border-warm-border px-6">
               <h1 className="truncate text-base font-semibold text-warm-text">
                 {detail?.title || '未命名会话'}
               </h1>
+              {/* Agent 选择器：/api/chat/send 需要 agent_id；默认主 Agent */}
+              <div className="flex items-center gap-1.5">
+                <Bot size={15} className="shrink-0 text-warm-text-muted" />
+                <select
+                  value={selectedAgentId ?? ''}
+                  onChange={(e) => setSelectedAgentId(e.target.value || null)}
+                  disabled={isThinking || agents.length === 0}
+                  className="max-w-[12rem] rounded-warm border border-warm-border bg-white px-2 py-1 text-xs text-warm-text focus:border-warm-orange focus:outline-none disabled:bg-warm-menu disabled:text-warm-text-muted"
+                  title="选择执行此消息的 Agent"
+                >
+                  {agents.length === 0 && <option value="">无可用 Agent</option>}
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                      {a.is_default ? '（主）' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </header>
 
             {/* 消息列表区 */}
             <div className="flex-1 overflow-y-auto px-6 py-4">
-              {detail && detail.events.length === 0 ? (
+              {/* done.note 提示横幅（暖色，区别于红色错误条）。可手动关闭。 */}
+              {infoNotice && (
+                <div className="mb-3 flex items-start gap-2 rounded-warm border border-warm-amber/50 bg-warm-amber/10 px-3 py-2 text-xs text-warm-text">
+                  <Info size={14} className="mt-0.5 shrink-0 text-warm-amber" />
+                  <span className="flex-1 whitespace-pre-wrap break-words">
+                    {infoNotice}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setInfoNotice('')}
+                    className="shrink-0 text-warm-text-muted hover:text-warm-text"
+                    aria-label="关闭提示"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              )}
+              {detail && detail.events.length === 0 && !isThinking ? (
                 <div className="flex h-full items-center justify-center text-sm text-warm-text-muted">
                   暂无对话记录
                 </div>
@@ -771,6 +1117,72 @@ export default function ChatPage() {
                   {detail?.events.map((event, index) => {
                     const isUser = event.role === 'user'
                     const text = event.data?.text ?? ''
+                    // tool_call 持久事件：渲染为工具卡片（携带历史参数）
+                    if (event.role === 'assistant' && event.type === 'tool_call') {
+                      const calls = (event.data?.tool_calls as
+                        | WireToolCall[]
+                        | undefined) ?? []
+                      return (
+                        <li key={index} className="flex justify-start">
+                          <div className="w-full max-w-[80%] space-y-1.5">
+                            {text && (
+                              <div className="chat-bubble rounded-warm bg-warm-menu px-3 py-2 text-sm text-warm-text">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  {text}
+                                </ReactMarkdown>
+                              </div>
+                            )}
+                            {calls.map((tc) => {
+                              const tcId = tc.id
+                              const resultEvent = findToolResult(detail, tcId)
+                              let argsParsed: unknown = tc.function?.arguments
+                              try {
+                                argsParsed = tc.function?.arguments
+                                  ? JSON.parse(tc.function.arguments)
+                                  : undefined
+                              } catch {
+                                argsParsed = tc.function?.arguments
+                              }
+                              return (
+                                <ToolCallCard
+                                  key={tcId || index}
+                                  name={tc.function?.name || '工具'}
+                                  argumentsObj={argsParsed}
+                                  result={resultEvent?.data?.result as string | undefined}
+                                  ok={resultEvent?.data?.ok as boolean | undefined}
+                                />
+                              )
+                            })}
+                          </div>
+                        </li>
+                      )
+                    }
+                    // tool_result 持久事件已并入对应 tool_call 卡片渲染，跳过独立行
+                    if (event.role === 'tool' && event.type === 'tool_result') {
+                      return null
+                    }
+                    // persisted thinking 事件：渲染为可折叠「Agent 思考中…」区域（与最终回复视觉区分）
+                    if (
+                      event.role === 'assistant' &&
+                      event.type === 'thinking'
+                    ) {
+                      const thinkText = (event.data?.text as string) || ''
+                      if (!thinkText) return null
+                      return (
+                        <li key={index} className="flex justify-start">
+                          <div className="w-full max-w-[80%]">
+                            <CollapsibleBlock
+                              title="Agent 思考中…"
+                              collapsedNote={`${thinkText.length} 字推理`}
+                            >
+                              <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-warm-text-muted">
+                                {thinkText}
+                              </pre>
+                            </CollapsibleBlock>
+                          </div>
+                        </li>
+                      )
+                    }
                     return (
                       <li
                         key={index}
@@ -834,11 +1246,79 @@ export default function ChatPage() {
                       </li>
                     )
                   })}
-                  {/* 思考态：在消息流末尾显示「正在思考...」跳动点动画 */}
+
+                  {/* 流式期间：实时渲染 thinking / content / tool 卡片 */}
                   {isThinking && (
-                    <li className="flex justify-start">
-                      <ThinkingIndicator />
-                    </li>
+                    <>
+                      {/* thinking 事件：可折叠「Agent 思考中...」区域，与最终回复视觉区分 */}
+                      {streamingThinking && (
+                        <li className="flex justify-start">
+                          <div className="w-full max-w-[80%]">
+                            <CollapsibleBlock
+                              title={
+                                <span className="flex items-center gap-1.5">
+                                  <span className="flex items-end gap-0.5">
+                                    <span className="thinking-dot" />
+                                    <span
+                                      className="thinking-dot"
+                                      style={{ animationDelay: '0.15s' }}
+                                    />
+                                    <span
+                                      className="thinking-dot"
+                                      style={{ animationDelay: '0.3s' }}
+                                    />
+                                  </span>
+                                  Agent 思考中…
+                                </span>
+                              }
+                              collapsedNote={`${streamingThinking.length} 字推理`}
+                            >
+                              <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-warm-text-muted">
+                                {streamingThinking}
+                              </pre>
+                            </CollapsibleBlock>
+                          </div>
+                        </li>
+                      )}
+
+                      {/* tool_call/tool_result 事件：实时工具卡片（按到达顺序） */}
+                      {streamingToolOrder.map((tcId) => {
+                        const tool = streamingTools[tcId]
+                        if (!tool) return null
+                        return (
+                          <li key={`stream-${tcId}`} className="flex justify-start">
+                            <div className="w-full max-w-[80%]">
+                              <ToolCallCard
+                                name={tool.name}
+                                argumentsObj={tool.args}
+                                result={tool.result}
+                                ok={tool.ok}
+                              />
+                            </div>
+                          </li>
+                        )
+                      })}
+
+                      {/* content 事件：逐字流式输出到 Agent 气泡 */}
+                      {streamingContent && (
+                        <li className="flex justify-start">
+                          <div className="chat-bubble max-w-[80%] rounded-warm bg-warm-menu px-3 py-2 text-sm text-warm-text">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              {streamingContent}
+                            </ReactMarkdown>
+                          </div>
+                        </li>
+                      )}
+
+                      {/* 无任何流式内容时：显示「正在思考...」跳动点动画 */}
+                      {!streamingThinking &&
+                        streamingToolOrder.length === 0 &&
+                        !streamingContent && (
+                          <li className="flex justify-start">
+                            <ThinkingIndicator />
+                          </li>
+                        )}
+                    </>
                   )}
                 </ul>
               )}
@@ -862,9 +1342,11 @@ export default function ChatPage() {
                   }}
                   rows={2}
                   placeholder={
-                    hasConversation
-                      ? '输入消息，点击发送按钮发送（回车换行）…'
-                      : '请先选择或新建会话'
+                    !hasConversation
+                      ? '请先选择或新建会话'
+                      : !selectedAgentId
+                        ? '请先在顶部选择一个 Agent'
+                        : '输入消息，点击发送按钮发送（回车换行）…'
                   }
                   disabled={!hasConversation}
                   className="min-h-[2.5rem] flex-1 resize-none rounded-warm border border-warm-border bg-white px-3 py-2 text-sm text-warm-text placeholder:text-warm-text-muted focus:border-warm-orange focus:outline-none disabled:bg-warm-menu disabled:text-warm-text-muted"
@@ -893,7 +1375,9 @@ export default function ChatPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={!hasConversation || isThinking || !inputText.trim()}
+                  disabled={
+                    !hasConversation || isThinking || !inputText.trim() || !selectedAgentId
+                  }
                   aria-label="发送消息"
                   className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-warm bg-warm-orange text-white transition-colors hover:bg-warm-orange/90 disabled:cursor-not-allowed disabled:bg-warm-border disabled:text-warm-text-muted"
                 >
