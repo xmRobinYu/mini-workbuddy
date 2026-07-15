@@ -584,9 +584,7 @@ def test_skill_call_is_dispatched_and_keeps_skill_type(tmp_path: Any) -> None:
             assert updated.status_code == 200
             conv_id = _create_conversation(client)
             round1 = _make_stream_response(
-                _tool_call_chunks(
-                    "summarise", {"text": "会议记录"}, call_type="skill"
-                )
+                _tool_call_chunks("summarise", {"text": "会议记录"})
             )
             round2 = _make_stream_response(_content_chunks("摘要完成"))
             with patch("httpx.AsyncClient.stream", _stream_mock([round1, round2])):

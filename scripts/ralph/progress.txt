@@ -564,3 +564,11 @@
   - 模型兼容的 wire `tool_calls` 与应用的持久化调用类型可以分开：前者固定 `function`，后者使用 `tool`/`skill` 支持 UI 和分发。
   - thinking 是可恢复 UI 状态，不应同时作为独立 assistant 历史和关联 tool-call 文本重放给模型。
 ---
+## 2026-07-16 00:47 - US-020
+- 修复 OpenAI 兼容工具调用的技能分发：模型在 wire protocol 中返回的 `tool_calls[].type` 为 `function` 时，现按本轮已暴露的技能名称识别并分发为 `skill`，避免错误作为内置工具返回“未知工具”。
+- 回归测试改用真实的 `type: "function"` 流式调用形状，确认技能结果、持久化调用类型均为 `skill`。
+- 更改的文件：`backend/app/services/agent_loop.py`、`backend/tests/test_chat_send_api.py`、`scripts/ralph/progress.txt`。
+- 质量检查：`cd backend && uv run pytest tests/test_chat_send_api.py`（12 passed）、`uv run pytest`（131 passed）、`uv run mypy app`（Success: no issues found in 33 source files）。
+- **未来迭代的学习：**
+  - OpenAI 兼容流式响应的调用 `type` 是 wire-level `function`，不能用于业务层的 tool/skill 分发；应使用当前请求实际暴露的函数名称映射恢复业务类型。
+---

@@ -365,7 +365,12 @@ async def run_agent_loop(
 
     agent_md = read_agent_md(agent_id) or ""
     system = build_system_prompt(agent_md, conversation_id)
-    tools = _build_tool_definitions(agent) + _build_skill_definitions(agent)
+    skill_definitions = _build_skill_definitions(agent)
+    tools = _build_tool_definitions(agent) + skill_definitions
+    skill_names = {
+        definition["function"]["name"]
+        for definition in skill_definitions
+    }
 
     # ── Build message history from persisted JSONL ───────────────────────
     messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
@@ -521,6 +526,7 @@ async def run_agent_loop(
         normalised_calls: list[dict[str, Any]] = []
         for call in tool_calls_acc:
             fn = call.get("function", {})
+            name = fn.get("name", "")
             arg_str = fn.get("arguments", "") or "{}"
             try:
                 arg_obj = json.loads(arg_str) if arg_str else {}
@@ -529,9 +535,9 @@ async def run_agent_loop(
             normalised_calls.append(
                 {
                     "id": call.get("id", ""),
-                    "type": "skill" if call.get("type") == "skill" else "tool",
+                    "type": "skill" if name in skill_names else "tool",
                     "function": {
-                        "name": fn.get("name", ""),
+                        "name": name,
                         "arguments": arg_obj,
                     },
                 }
