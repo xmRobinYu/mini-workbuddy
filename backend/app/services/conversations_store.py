@@ -263,13 +263,20 @@ def append_event(conversation_id: str, event: dict[str, Any]) -> dict[str, Any]:
 
     Returns the same ``event`` dict for convenience.
     """
+    event.setdefault("role", "")
+    event.setdefault("type", "")
+    event.setdefault("timestamp", _utcnow_iso())
+    event.setdefault("data", {})
+    event.setdefault("reasoning", "")
+    event.setdefault("tool_call_id", "")
+
     directory = _conv_dir(conversation_id)
     directory.mkdir(parents=True, exist_ok=True)
     jsonl = _jsonl_path(conversation_id)
     lock = FileLock(str(_lock_path(conversation_id)))
     with lock:
         # Atomic append: read existing lines, append the new event, write to a
-        # sibling ``.tmp`` file then ``os.replace`` it over the real JSONL.
+        # sibling ``.tmp`` file then ``os.rename`` it over the real JSONL.
         # A plain append-mode write could leave a half-written trailing line
         # if the process is interrupted mid-``write``; the tmp+rename swap is
         # atomic at the filesystem level so the JSONL is never observed in a
@@ -280,7 +287,7 @@ def append_event(conversation_id: str, event: dict[str, Any]) -> dict[str, Any]:
         blob = existing + json.dumps(event, ensure_ascii=False) + "\n"
         tmp_path = jsonl.with_suffix(jsonl.suffix + ".tmp")
         tmp_path.write_text(blob, encoding="utf-8")
-        os.replace(tmp_path, jsonl)
+        os.rename(tmp_path, jsonl)
         # Bump updated_at so list/search reflect the new activity.
         meta = _read_meta(conversation_id)
         if meta is not None:

@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- JSONL 事件的固定字段在 `conversations_store.append_event` 集中补默认值；所有写入入口自动获得一致的持久化结构。
 - 动态系统提示词应放在独立的 service 中，并由 Agent Loop 在每个请求前以实际 `conversation_id` 组装；路径常量通过 `app.core.config` 注入，便于单元测试替换记忆文件。
 - 后端使用 `uv` 管理依赖，开发命令 `cd backend && uv sync --extra dev`；启动 `uv run uvicorn app.main:app --reload --port 8000`
 - 后端路径解析基于 `app/core/config.py` 中的 `PROJECT_ROOT`（`Path(__file__).resolve().parents[3]`），所有 workspace 路径常量集中在此
@@ -535,4 +536,19 @@
 - **未来迭代的学习：**
   - 动态上下文应由独立的纯组装 service 处理，避免将文件读取和路径规则耦合到流式 Agent Loop。
   - 在测试中替换模块级路径常量时，读取函数不要通过默认参数捕获该常量，否则 monkeypatch 不会生效。
+---
+## 2026-07-16 00:29 - US-019
+- 完善 JSONL 事件持久化契约：`append_event` 在原有会话级 filelock 和 `.jsonl.tmp` + `os.replace` 原子替换基础上，统一补齐 `role`、`type`、`timestamp`、`data`、`reasoning`、`tool_call_id` 字段的默认值。
+- 新增存储层回归测试，覆盖原子追加后临时文件清理、损坏 JSONL 行跳过、同一会话 100 个并发写入的完整性，以及两个会话并发写入的隔离性。
+- 更改的文件：`backend/app/services/conversations_store.py`、`backend/tests/test_conversations_store.py`、`scripts/ralph/progress.txt`。
+- 质量检查：`cd backend && uv run pytest`（129 passed）；`cd backend && uv run mypy app`（Success: no issues found in 33 source files）。
+- **未来迭代的学习：**
+  - JSONL 的读改写必须在按会话划分的 `FileLock` 内进行；临时文件也放在同一会话目录，才能让 `os.replace` 保持同一文件系统内的原子替换。
+  - 并发测试应校验完整可解析行数和唯一业务标识集合，而不是依赖线程调度产生的写入顺序。
+---
+## 2026-07-16 00:31 - US-019
+- 勘误：原子替换实现与回归测试使用验收标准指定的 `os.rename`（而非上一条记录中误写的 `os.replace`）。
+- 更改的文件：`backend/app/services/conversations_store.py`、`backend/tests/test_conversations_store.py`、`scripts/ralph/progress.txt`。
+- **未来迭代的学习：**
+  - 原子替换的测试应拦截替换函数并断言临时路径与正式 JSONL 路径，确保实现持续满足存储协议。
 ---
