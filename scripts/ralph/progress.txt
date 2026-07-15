@@ -418,3 +418,20 @@
   - 与 US-014 同型场景：RALPH_STORY_ID 指向已实现提交、passes=false 且 notes 为空、currentPhase=develop 的 story，属 develop_and_validate 模式的 develop 阶段已完成、等待 Validator；只复跑质量检查确认绿色，不重新实现、不提前置 passes=true（违反 workflowMode 规则）
   - SSE /chat/send 端点与 agent_loop 的 mock 流式测试（`test_chat_send_api.py`）已覆盖 content/done/error/tool_call/tool_result/JSONL 持久化/参数校验/禁用工具排除，质量检查无需改动即可保持 122 passed
 ---
+
+## 2026-07-15 09:00 - US-016
+- 复核已提交的 SSE 流式发送消息后端端点（commit `cad24bb`）；work package 无 Validator 失败备注（notes 为空），currentPhase=develop，无需修改业务源代码。
+- 本次提交工作树中遗留的 ralph 工具配套改进（US-016 开发周期内产生，此前未单独提交）：
+  - `scripts/ralph/dashboard.py`：`HTTPServer` → `ThreadingHTTPServer`（`_DashboardServer`，`daemon_threads=True` + `allow_reuse_address=True` + `request_queue_size=64`），并在 `_Handler.setup()` 设置 `self.request.settimeout(10)`，避免 dashboard 在单连接阻塞时卡死整个监控服务
+  - `scripts/ralph/dashboard.html` / `dashboard-p.html`：进度日志 body 渲染前先 `escapeHtml`/`esc` 转义再应用 `**bold**` 替换，防止 progress.txt 中的尖括号/特殊字符被当 HTML 注入；同时修正 `.system-strip` 在 dashboard.html 中的 DOM 位置
+  - `scripts/ralph/ralph.py`：`_stop_processes` 改为先停 Ralph 子进程（PID_FILE）再停 supervisor（SUPERVISOR_PID_FILE），避免 supervisor 在子进程仍存活时被先杀导致重启竞态
+  - `scripts/ralph/test_ralph.py`：新增两个测试覆盖上述改动（`test_dashboard_server_handles_requests_in_daemon_threads`、`test_stop_processes_stops_child_before_supervisor`）
+- 更改的文件：scripts/ralph/dashboard.py、scripts/ralph/dashboard.html、scripts/ralph/dashboard-p.html、scripts/ralph/ralph.py、scripts/ralph/test_ralph.py
+- 质量检查：`python3 -m pytest test_ralph.py` 23 passed；`uv run pytest`（后端）122 passed；`uv run mypy app` Success（32 source files）；前端 `npm run typecheck` + `npm run lint` 通过
+- **未来迭代的学习：**
+  - develop_and_validate 模式下，已实现提交、passes=false 且 notes 为空的 story 属 develop 阶段完成、等待 Validator；只复跑质量检查确认绿色，不提前置 passes=true
+  - 工作树中若残留上一周期内的辅助工具改动（dashboard/ralph.py），应在复跑质量检查后一并提交，避免长期堆积未提交 diff 污染后续 story 的 git status
+  - `ThreadingHTTPServer` + `daemon_threads=True` 是 dashboard 这类轻量监控服务的标准做法：单请求阻塞不会拖垮整个 server；配合 `setup()` 里的 `settimeout(10)` 给 socket 读超时兜底
+  - 渲染任意来源文本（如 progress.txt 日志）到 innerHTML 前，必须先 escape 再做 Markdown 式替换（`**bold**`），顺序反了会把转义后的实体再破坏
+  - supervisor 架构下停止顺序：先停被守护的子进程、再停 supervisor，否则 supervisor 可能在子进程仍存活时触发自动重启
+---
