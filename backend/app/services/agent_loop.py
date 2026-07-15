@@ -1,20 +1,19 @@
-"""Agent execution loop driving the SSE chat send endpoint (US-016).
+"""Agent execution loop driving the SSE chat send endpoint.
 
 This module owns the streaming orchestration: assemble the request context,
-call the OpenAI-compatible model with streaming, parse tool-call requests,
-execute built-in tools, persist every interaction event to the conversation
-JSONL, and emit SSE events to the client. It is the streaming surface; the
-deeper Agent-Loop concerns (50-round degradation, skill execution, context
-compression, memory-rule injection) are intentionally minimal here and will
-be elaborated by US-018 … US-021.
+call the OpenAI-compatible model with streaming, parse tool/skill call
+requests, execute them, persist every interaction event to the conversation
+JSONL, and emit SSE events to the client.
 
-Responsibilities explicitly in scope for US-016:
+Responsibilities:
 - Stream ``content`` / ``thinking`` / ``tool_call`` / ``tool_result`` /
   ``done`` / ``error`` SSE events.
 - 15 s heartbeat keep-alive (injected by a side task between events).
 - Detect client disconnect and terminate the loop.
 - Persist every interaction event to the conversation JSONL so an
   interrupted stream keeps what was already written.
+- Dispatch tool and skill calls with the same ``tool_calls`` shape.  Calls
+  persisted to the conversation use ``type: tool`` or ``type: skill``.
 
 Design notes:
 - The model call is streamed with httpx so first-token latency stays low
@@ -31,11 +30,13 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 import httpx
 
 from app.schemas.tool import SecurityBlockedError
+from app.core.config import SKILLS_CONFIG_DIR
 from app.services import conversations_store, sse_events, tool_functions
 from app.services.agents_store import get_agent, read_agent_md
 from app.services.model_tester import _build_chat_url, _resolve_api_key
@@ -74,8 +75,9 @@ def _utcnow_iso() -> str:
 def _build_tool_definitions(agent: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the OpenAI ``tools`` array for the Agent's enabled built-ins.
 
-    Disabled tools are excluded (US-020 acceptance criterion); only the three
-    built-in tools are wired here — skills are deferred to later stories.
+    Disabled tools are excluded.  The OpenAI wire protocol requires
+    ``type: function`` here; completed calls are normalised to ``type: tool``
+    before they are persisted and dispatched.
     """
     from app.services.tools_store import TOOL_DESCRIPTIONS, is_tool_enabled
 
@@ -123,6 +125,42 @@ def _build_tool_definitions(agent: dict[str, Any]) -> list[dict[str, Any]]:
     return definitions
 
 
+def _skill_file(skill_id: str) -> Path | None:
+    """Return the selected skill's definition file when it stays in config."""
+    if not skill_id or "/" in skill_id or "\\" in skill_id or skill_id in {".", ".."}:
+        return None
+    candidate = (SKILLS_CONFIG_DIR / skill_id / "SKILL.md").resolve(strict=False)
+    root = SKILLS_CONFIG_DIR.resolve(strict=False)
+    if root not in candidate.parents or not candidate.is_file():
+        return None
+    return candidate
+
+
+def _build_skill_definitions(agent: dict[str, Any]) -> list[dict[str, Any]]:
+    """Expose configured skills through OpenAI-compatible function schemas."""
+    definitions: list[dict[str, Any]] = []
+    for skill_id in agent.get("skills", []):
+        if not isinstance(skill_id, str):
+            continue
+        skill_file = _skill_file(skill_id)
+        if skill_file is None:
+            continue
+        description = skill_file.read_text(encoding="utf-8").splitlines()[0:1]
+        definitions.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": skill_id,
+                    "description": description[0].lstrip("# ").strip()
+                    if description
+                    else f"执行技能 {skill_id}",
+                    "parameters": {"type": "object", "additionalProperties": True},
+                },
+            }
+        )
+    return definitions
+
+
 def _execute_tool(name: str, arguments: dict[str, Any]) -> tuple[str, bool]:
     """Run a built-in tool by name. Returns ``(result_text, ok)``.
 
@@ -149,6 +187,40 @@ def _execute_tool(name: str, arguments: dict[str, Any]) -> tuple[str, bool]:
     except Exception as exc:  # noqa: BLE001 — surface any tool error to the model
         return f"工具执行失败：{exc}", False
     return result, True
+
+
+def _execute_skill(name: str, arguments: dict[str, Any]) -> tuple[str, bool]:
+    """Load a configured skill definition as the skill's deterministic flow.
+
+    Skills are Markdown-defined procedures in P0.  Returning the definition
+    and invocation arguments lets the model execute that procedure while
+    preserving the same result/error feedback loop used by built-in tools.
+    """
+    try:
+        skill_file = _skill_file(name)
+        if skill_file is None:
+            return f"技能不可用：{name}", False
+        definition = skill_file.read_text(encoding="utf-8").strip()
+        if not definition:
+            return f"技能执行失败：{name} 的 SKILL.md 为空", False
+        return (
+            f"技能“{name}”已加载。调用参数："
+            f"{json.dumps(arguments, ensure_ascii=False)}\n\n{definition}",
+            True,
+        )
+    except OSError as exc:
+        return f"技能执行失败：{exc}", False
+
+
+def _execute_call(
+    call_type: str, name: str, arguments: dict[str, Any]
+) -> tuple[str, bool]:
+    """Dispatch a normalised tool or skill call without automatic retries."""
+    if call_type == "tool":
+        return _execute_tool(name, arguments)
+    if call_type == "skill":
+        return _execute_skill(name, arguments)
+    return f"未知调用类型：{call_type}", False
 
 
 def _parse_stream_line(line: str) -> dict[str, Any] | None:
@@ -293,7 +365,7 @@ async def run_agent_loop(
 
     agent_md = read_agent_md(agent_id) or ""
     system = build_system_prompt(agent_md, conversation_id)
-    tools = _build_tool_definitions(agent)
+    tools = _build_tool_definitions(agent) + _build_skill_definitions(agent)
 
     # ── Build message history from persisted JSONL ───────────────────────
     messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
@@ -304,6 +376,11 @@ async def run_agent_loop(
                 {"role": "user", "content": ev.get("data", {}).get("text", "")}
             )
         elif role == "assistant":
+            # Thinking is persisted for UI recovery. Its text is already
+            # carried by the associated tool-call assistant message, so it
+            # must not be added a second time to future model requests.
+            if ev.get("type") == "thinking":
+                continue
             entry: dict[str, Any] = {
                 "role": "assistant",
                 "content": ev.get("data", {}).get("text", "") or None,
@@ -387,7 +464,6 @@ async def run_agent_loop(
                     text, deltas = _extract_delta(chunk)
                     if text:
                         text_buf += text
-                        yield sse_events.content_event(text)
                     if deltas:
                         _merge_tool_call_deltas(tool_calls_acc, deltas)
                     reason = _finish_reason(chunk)
@@ -409,9 +485,10 @@ async def run_agent_loop(
                 yield sse_events.done_event()
                 return
 
-        # ── No tool calls: persist the final reply and finish ────────────
+        # ── No tool calls: stream, persist the final reply and finish ───
         if not tool_calls_acc:
             if text_buf:
+                yield sse_events.content_event(text_buf)
                 conversations_store.append_event(
                     conversation_id,
                     {
@@ -425,6 +502,22 @@ async def run_agent_loop(
             return
 
         # ── Tool calls: emit, execute, persist, feed back to model ───────
+        # A model may include explanatory text before requesting work.  This
+        # belongs to the intermediate reasoning stream rather than the final
+        # assistant reply, and must remain visible after a page refresh.
+        if text_buf:
+            yield sse_events.thinking_event(text_buf)
+            conversations_store.append_event(
+                conversation_id,
+                {
+                    "role": "assistant",
+                    "type": "thinking",
+                    "timestamp": _utcnow_iso(),
+                    "data": {"text": text_buf},
+                    "reasoning": text_buf,
+                },
+            )
+
         normalised_calls: list[dict[str, Any]] = []
         for call in tool_calls_acc:
             fn = call.get("function", {})
@@ -436,7 +529,7 @@ async def run_agent_loop(
             normalised_calls.append(
                 {
                     "id": call.get("id", ""),
-                    "type": call.get("type", "function"),
+                    "type": "skill" if call.get("type") == "skill" else "tool",
                     "function": {
                         "name": fn.get("name", ""),
                         "arguments": arg_obj,
@@ -449,7 +542,7 @@ async def run_agent_loop(
         wire_tool_calls = [
             {
                 "id": c["id"],
-                "type": c["type"],
+                "type": "function",
                 "function": {
                     "name": c["function"]["name"],
                     "arguments": json.dumps(
@@ -458,6 +551,13 @@ async def run_agent_loop(
                 },
             }
             for c in normalised_calls
+        ]
+        persisted_calls = [
+            {
+                **wire_call,
+                "type": call["type"],
+            }
+            for wire_call, call in zip(wire_tool_calls, normalised_calls, strict=True)
         ]
         messages.append(
             {
@@ -472,7 +572,7 @@ async def run_agent_loop(
                 "role": "assistant",
                 "type": "tool_call",
                 "timestamp": _utcnow_iso(),
-                "data": {"text": text_buf, "tool_calls": wire_tool_calls},
+                "data": {"text": text_buf, "tool_calls": persisted_calls},
                 "tool_call_id": (
                     normalised_calls[0]["id"] if normalised_calls else ""
                 ),
@@ -481,11 +581,12 @@ async def run_agent_loop(
 
         for call in normalised_calls:
             tc_id = call["id"]
+            call_type = call["type"]
             name = call["function"]["name"]
             args = call["function"]["arguments"]
             yield sse_events.tool_call_event(tc_id, name, args)
 
-            result, ok = _execute_tool(name, args)
+            result, ok = _execute_call(call_type, name, args)
             yield sse_events.tool_result_event(tc_id, name, result, ok=ok)
 
             conversations_store.append_event(
@@ -495,7 +596,12 @@ async def run_agent_loop(
                     "type": "tool_result",
                     "timestamp": _utcnow_iso(),
                     "tool_call_id": tc_id,
-                    "data": {"name": name, "result": result, "ok": ok},
+                    "data": {
+                        "name": name,
+                        "type": call_type,
+                        "result": result,
+                        "ok": ok,
+                    },
                 },
             )
             messages.append(
@@ -517,5 +623,6 @@ __all__ = [
     "MAX_TOOL_ROUNDS",
     "HEARTBEAT_INTERVAL",
     "AgentLoopError",
+    "_execute_call",
     "run_agent_loop",
 ]

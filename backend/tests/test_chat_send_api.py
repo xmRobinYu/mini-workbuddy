@@ -204,11 +204,28 @@ def _content_chunks(text: str) -> list[dict[str, Any]]:
 
 
 def _tool_call_chunks(
-    name: str, arguments: dict[str, Any], call_id: str = "call_1"
+    name: str,
+    arguments: dict[str, Any],
+    call_id: str = "call_1",
+    call_type: str = "function",
+    reasoning: str = "",
 ) -> list[dict[str, Any]]:
     """OpenAI streaming chunks that request a single tool call."""
     arg_str = json.dumps(arguments)
-    return [
+    chunks: list[dict[str, Any]] = []
+    if reasoning:
+        chunks.append(
+            {
+                "choices": [
+                    {
+                        "delta": {"content": reasoning},
+                        "index": 0,
+                        "finish_reason": None,
+                    }
+                ]
+            }
+        )
+    chunks.extend([
         {
             "choices": [
                 {
@@ -217,7 +234,7 @@ def _tool_call_chunks(
                             {
                                 "index": 0,
                                 "id": call_id,
-                                "type": "function",
+                                "type": call_type,
                                 "function": {"name": name, "arguments": ""},
                             }
                         ]
@@ -245,7 +262,8 @@ def _tool_call_chunks(
                 {"delta": {}, "index": 0, "finish_reason": "tool_calls"}
             ]
         },
-    ]
+    ])
+    return chunks
 
 
 # ── endpoint shape ──────────────────────────────────────────────────────────
@@ -498,6 +516,97 @@ def test_tool_failure_surfaces_ok_false_and_continues() -> None:
         tool_result = next(c for c in chunks if c["event"] == "tool_result")
         assert tool_result["data"]["ok"] is False
         assert "安全拦截" in tool_result["data"]["result"]
+
+
+def test_intermediate_tool_round_text_is_thinking_and_persisted() -> None:
+    """Text accompanying a tool request is reasoning, not final content."""
+    _install_memory_keyring()
+    _reset_all()
+    with TestClient(create_app()) as client:
+        model_id = _create_model(client)
+        _attach_model_to_default(client, model_id)
+        conv_id = _create_conversation(client)
+        round1 = _make_stream_response(
+            _tool_call_chunks(
+                "read_file", {"path": "memory/missing.md"}, reasoning="先检查文件"
+            )
+        )
+        round2 = _make_stream_response(_content_chunks("检查完成"))
+        with patch("httpx.AsyncClient.stream", _stream_mock([round1, round2])):
+            resp = client.post(
+                "/api/chat/send",
+                json={
+                    "conversation_id": conv_id,
+                    "message": "检查文件",
+                    "agent_id": agents_store.get_default_agent()["id"],
+                },
+            )
+
+        events = _sse_chunks(resp)
+        assert [event["event"] for event in events] == [
+            "thinking",
+            "tool_call",
+            "tool_result",
+            "content",
+            "done",
+        ]
+        detail = conversations_store.get_conversation(conv_id)
+        assert detail is not None
+        thinking = next(event for event in detail["events"] if event["type"] == "thinking")
+        assert thinking["data"]["text"] == "先检查文件"
+
+
+def test_skill_call_is_dispatched_and_keeps_skill_type(tmp_path: Any) -> None:
+    """Skills share tool_calls but retain their distinct persisted type."""
+    from app.services import agent_loop
+
+    _install_memory_keyring()
+    _reset_all()
+    skills_dir = tmp_path / "skills"
+    skill_dir = skills_dir / "summarise"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("# 摘要技能\n\n按步骤输出摘要。", encoding="utf-8")
+
+    with patch.object(agent_loop, "SKILLS_CONFIG_DIR", skills_dir):
+        with TestClient(create_app()) as client:
+            model_id = _create_model(client)
+            agent = _attach_model_to_default(client, model_id)
+            updated = client.put(
+                f"/api/agents/{agent['id']}",
+                json={
+                    "name": agent["name"],
+                    "description": agent["description"],
+                    "model_id": model_id,
+                    "tools": agent["tools"],
+                    "skills": ["summarise"],
+                },
+            )
+            assert updated.status_code == 200
+            conv_id = _create_conversation(client)
+            round1 = _make_stream_response(
+                _tool_call_chunks(
+                    "summarise", {"text": "会议记录"}, call_type="skill"
+                )
+            )
+            round2 = _make_stream_response(_content_chunks("摘要完成"))
+            with patch("httpx.AsyncClient.stream", _stream_mock([round1, round2])):
+                resp = client.post(
+                    "/api/chat/send",
+                    json={
+                        "conversation_id": conv_id,
+                        "message": "整理会议记录",
+                        "agent_id": agent["id"],
+                    },
+                )
+
+    detail = conversations_store.get_conversation(conv_id)
+    assert detail is not None
+    call = next(event for event in detail["events"] if event["type"] == "tool_call")
+    result = next(event for event in detail["events"] if event["role"] == "tool")
+    assert call["data"]["tool_calls"][0]["type"] == "skill"
+    assert result["data"]["type"] == "skill"
+    assert result["data"]["ok"] is True
+    assert "摘要技能" in result["data"]["result"]
 
 
 def test_disabled_tool_excluded_from_request() -> None:

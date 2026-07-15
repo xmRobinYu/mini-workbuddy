@@ -1,4 +1,6 @@
 ## Codebase Patterns
+- 对 OpenAI 兼容接口，出站 `tool_calls` 必须保持 `type: "function"`；业务层的 `tool`/`skill` 区分应在持久化和分发层保留，避免破坏模型协议。
+- 仅供 UI 恢复的 assistant `thinking` 事件不应重复注入后续模型上下文；关联的 tool-call assistant 消息才是模型上下文的权威记录。
 - JSONL 事件的固定字段在 `conversations_store.append_event` 集中补默认值；所有写入入口自动获得一致的持久化结构。
 - 动态系统提示词应放在独立的 service 中，并由 Agent Loop 在每个请求前以实际 `conversation_id` 组装；路径常量通过 `app.core.config` 注入，便于单元测试替换记忆文件。
 - 后端使用 `uv` 管理依赖，开发命令 `cd backend && uv sync --extra dev`；启动 `uv run uvicorn app.main:app --reload --port 8000`
@@ -551,4 +553,14 @@
 - 更改的文件：`backend/app/services/conversations_store.py`、`backend/tests/test_conversations_store.py`、`scripts/ralph/progress.txt`。
 - **未来迭代的学习：**
   - 原子替换的测试应拦截替换函数并断言临时路径与正式 JSONL 路径，确保实现持续满足存储协议。
+---
+## 2026-07-16 00:38 - US-020
+- 完成 Agent Loop 的工具/技能统一调用分发：内置工具和已配置技能均通过 `tool_calls` 执行；持久化调用类型明确为 `tool` 或 `skill`，同时保持发送给 OpenAI 兼容模型的 wire type 为 `function`。
+- 为技能增加受限的 `SKILL.md` 解析和路径校验；技能不存在、内容为空或读取失败会作为 `ok=false` 的调用结果返回模型，由模型决定后续处理。
+- 将伴随工具/技能调用的中间文本发送为 `thinking` SSE 事件并即时写入 JSONL，刷新页面后仍可恢复；后续模型上下文会跳过仅供 UI 的 thinking 事件，避免重复注入。
+- 更改的文件：`backend/app/services/agent_loop.py`、`backend/tests/test_chat_send_api.py`、`scripts/ralph/progress.txt`。
+- 质量检查：`cd backend && uv run pytest`（131 passed）；`cd backend && uv run mypy app`（Success: no issues found in 33 source files）。
+- **未来迭代的学习：**
+  - 模型兼容的 wire `tool_calls` 与应用的持久化调用类型可以分开：前者固定 `function`，后者使用 `tool`/`skill` 支持 UI 和分发。
+  - thinking 是可恢复 UI 状态，不应同时作为独立 assistant 历史和关联 tool-call 文本重放给模型。
 ---
