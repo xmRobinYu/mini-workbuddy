@@ -21,6 +21,7 @@ SKILLS_CONFIG_DIR = CONFIG_DIR / "skills"
 
 MODELS_FILE = CONFIG_DIR / "models.json"
 COMMAND_BLOCKLIST_FILE = CONFIG_DIR / "command_blocklist.json"
+TOOLS_FILE = CONFIG_DIR / "tools.json"
 
 # Frontend dev server origin allowed by CORS.
 CORS_ORIGINS = [

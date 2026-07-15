@@ -15,6 +15,12 @@
 - 后端业务逻辑分三层：`app/schemas/`（Pydantic 校验）、`app/services/`（业务+持久化）、`app/api/`（路由编排）
 - 文件持久化用 `filelock.FileLock` 包裹读写，锁文件放同目录 `<name>.json.lock`；workspace/ 被 gitignore
 - keyring 密钥链可用性判断：`getattr(backend, "name", "")` 含 "fail"/"null" 即不可用，降级到 env 引用；测试用 `keyring.set_keyring(MemoryKeyring())` 注入内存 backend
+- 内置工具集固定为 `read_file`/`write_file`/`execute_command` 三元组（不可增删），启用状态存 `workspace/config/tools.json`，缺失默认 enabled=True；安全拦截统一抛 `SecurityBlockedError`（reason 字段回传给 Agent）
+- 路径安全统一用 `app/core/path_security.py` 的 `is_safe_workspace_path`（`..` 拒绝 + 符号链接逃逸检测 + workspace 前缀校验）；工具函数中相对路径需先锚定到 `WORKSPACE_DIR` 再校验
+- `execute_command` 安全护栏：黑名单子串匹配(大小写不敏感)、`subprocess.run(timeout=60)` 自动 SIGKILL、working_dir 限定 workspace/、输出截断 100KB、`_strip_sensitive_env` 剥离 `OPENAI_API_KEY`/`MINI_WORKBUDDY_*`/`*_TOKEN` 等敏感环境变量
+- 测试隔离陷阱：`workspace/config/tools.json`（工具启用态）**不在** `agents_store.reset_for_test()`/`conversations_store.reset_for_test()` 的清理范围内，且 workspace/ 被 gitignore 不会随 commit 重置。任何依赖工具启用态的测试（如 agent-loop 请求体断言）必须在 setup 里显式调 `tools_store.reset_for_test()`，否则上一次测试遗留的 disabled 标志会静默改变后续测试行为（非确定性失败）
+- SSE 流式端点 pattern：`StreamingResponse(async_gen, media_type="text/event-stream")` + `Cache-Control: no-cache` + `X-Accel-Buffering: no`（禁 nginx 缓冲）；事件统一 `data: {json}\n\n` 单行格式（见 `app/services/sse_events.py`），心跳为 `: heartbeat\n\n` 注释行；断连检测用 `await request.is_disconnected()` 轮询 + 写已关闭连接会抛异常双重保险
+- Agent Loop（`app/services/agent_loop.py`）自解析 OpenAI 流式 `data:` 行（不依赖 OpenAI SDK），工具调用 delta 按 `index` 累积合并；每轮 user/assistant/tool 事件即时 `conversations_store.append_event` 落 JSONL，断连也保留已写记录
 
 ---
 
@@ -101,4 +107,349 @@
   - OpenAI 兼容性校验：检查响应 JSON 是否含 "choices" 字段（chat completions 格式），不含则返回格式不兼容错误
   - `base_url` 处理：`_build_chat_url()` 兼容 `https://api.example.com`、`.../v1`、`.../chat/completions` 三种输入，自动补全为 `/v1/chat/completions`
   - 连接测试端点是只读的（不调用 add/update/delete_model），失败测试不影响已保存的模型配置
+---
+
+## 2026-07-14 19:16 - US-001
+- 复核已提交的 FastAPI 脚手架与 workspace 初始化实现（`c87fe6f`）；当前 work package 无 Validator 失败备注，无需修改源代码。
+- 更改的文件：`scripts/ralph/progress.txt`（追加复核记录）
+- 质量检查：`python3 -m pytest` 28 passed；`python3 -m mypy app` Success: no issues found in 15 source files。
+- **未来迭代的学习：**
+  - Ralph 指向已完成实现、但仍处于 develop 阶段且没有 notes 的 story 时，先用对应提交和质量检查确认状态，避免重复实现。
+  - 本环境可能没有预装 `uv` 或项目 `.venv`；可安装项目声明依赖后使用 `python3 -m pytest` 与 `python3 -m mypy app` 进行等价复核。
+---
+## 2026-07-14 19:25 - US-004
+- 复核已提交的模型连接测试 API 实现（`51d7fae`），当前 work package 无 Validator 失败备注，无需修改源代码。
+- 更改的文件：`scripts/ralph/progress.txt`（追加复核记录）。
+- 质量检查：`uv run pytest tests/test_models_test_api.py`、`uv run pytest`、`uv run mypy app` 全部通过。
+- **未来迭代的学习：**
+  - 连接测试通过独立的 `model_tester.py` service 执行最小 `chat/completions` 请求，并用 `choices` 字段验证 OpenAI 兼容响应。
+  - 复核已完成的 develop 阶段 story 时，仅在存在 Validator notes 时修复；无 notes 时保留现有实现并运行相关质量检查。
+---
+
+## 2026-07-14 19:50 - US-005
+- 实现了模型管理前端页面 `frontend/src/pages/ModelsPage.tsx`，覆盖全部验收标准：
+  - 卡片式列表：展示模型名称、provider（中文标签）、上下文窗口大小（tokens），并显示 base_url
+  - 新增模型表单：名称、provider、baseUrl、apiKey、apiKey_env（可选）、context_window_tokens
+  - 编辑模型表单：复用同一表单，apiKey 留空则保持不变（编辑时非必填），其余字段全量回填
+  - 连接测试按钮：点击后调用 `POST /api/models/{id}/test`，在卡片上显示成功（含延迟 ms）/失败（含错误信息）结果
+  - 删除二次确认弹窗：点击删除先弹出确认对话框，确认后才调用 DELETE
+- 配套：`frontend/src/index.css` 新增 `.form-input` 全局输入框样式（暖橙 focus 边框）
+- 清理：`frontend/.gitignore` 补充 `*.tsbuildinfo`；从 git 移除误提交的 `frontend/tsconfig.app.tsbuildinfo` 缓存文件
+- 更改的文件：frontend/src/pages/ModelsPage.tsx（新增）、frontend/src/index.css、frontend/.gitignore、删除 frontend/tsconfig.app.tsbuildinfo
+- 质量检查：`npm run typecheck` 通过（0 errors）、`npm run lint` 通过（0 warnings）、`npm run build` 成功（dist 产出 ~183KB JS）
+- 浏览器验证（agent-browser）：在 http://localhost:5181/models 新增 TestModel（baseUrl http://localhost:9999/v1，provider=custom，apiKey_env=TEST_MODEL_KEY），点击「测试连接」后卡片显示「连接失败：认证失败：未配置 API 密钥」错误信息；点击删除弹出「删除模型配置？」二次确认弹窗，验证通过后取消
+- **未来迭代的学习：**
+  - 前端 `apiGet/apiPost/apiPut/apiDelete` 已封装在 `@/lib/api.ts`，baseURL 统一 `/api`，通过 Vite proxy 联调后端
+  - 后端 `ModelCreate` schema 要求 `api_key` 必填；当 keychain 不可用（headless 环境）时必须同时提供 `api_key_env` 降级，否则返回 400。前端表单始终发送 api_key，并允许填 api_key_env
+  - headless 环境下 keychain 为 fail.Keyring，连接测试若仅用 env 引用且未设置对应环境变量，会返回「认证失败：未配置 API 密钥」（这正是验收标准期望的错误信息）
+  - 本机 5173/5174/5180 端口已被其他项目（enzebaba-cloud、ragent-plus）的 vite 占用；启动本项目前端 dev server 前必须用 `ss -ltn` 找空闲端口（本次用 5181）
+  - `*.tsbuildinfo` 是 `tsc -b` 的增量缓存，已在 `.gitignore` 但历史误提交过，新增/修改后要用 `git rm --cached` 清理
+  - 不属于当前 story 的改动（scripts/ralph/ralph.py supervisor、ralph_service.sh、test_ralph.py）保留未提交，不在本 commit 范围内
+---
+
+## 2026-07-14 20:13 - US-006
+- 实现了可复用的路径安全校验工具函数 `is_safe_workspace_path`
+  - `backend/app/core/path_security.py`：`is_safe_workspace_path(target)` 三层防御：(1) 原始路径 `parts` 含 `..` 直接拒绝；(2) `os.path.islink` 逐级检查每个路径组件是否为符号链接，符号链接 resolve 后落在 workspace 外即判定逃逸拒绝；(3) `pathlib.resolve()` 解析后用 `relative_to(workspace_root)` 做前缀检查。返回 True/False
+  - 辅助函数 `_contains_symlink_escape(resolved)`：从最深组件向 workspace 根上溯，对每个存在组件做 islink + readlink resolve，避免符号链接目录把解析重定向到 workspace 外
+  - `backend/tests/test_path_security.py`：13 个单元测试覆盖全部验收标准——正常路径、workspace 根、`..` 穿越（含虽 resolve 在内但含 `..` 仍拒绝）、`..` 逃逸到外、绝对路径越界、系统路径 `/etc/passwd`、workspace 内不存在路径、符号链接逃逸、符号链接目标在内（允许）、符号链接目录组件逃逸、字符串输入、相对路径按 cwd 解析
+- 更改的文件：backend/app/core/path_security.py（新增）、backend/tests/test_path_security.py（新增）
+- 质量检查：`python3 -m pytest tests/test_path_security.py` 13 passed；全量 `python3 -m pytest` 41 passed；`python3 -m mypy app` Success: no issues found in 16 source files
+- **未来迭代的学习：**
+  - 路径安全函数是 US-007 工具层（read_file/write_file/execute_command）的前置依赖，后续工具函数应统一调用 `is_safe_workspace_path()` 校验用户传入路径后再操作文件
+  - `..` 检查应在原始 `path.parts` 上做而非 resolve 后做——resolve 会归一化 `..`，无法区分"含穿越意图的输入"与"合法归一路径"，对工具输入应从源头拒绝
+  - 符号链接逃逸需逐组件检查：仅检查最终路径的 islink 不够，父目录组件若是符号链接目录会把整个子树重定向出 workspace；从最深组件向 workspace 根上溯并 resolve readlink 目标做前缀检查
+  - 测试中创建符号链接会真实写入文件系统，不要在真实 workspace/ 下做；用 monkeypatch 替换 `app.core.path_security.WORKSPACE_DIR` 指向 tmp_path 隔离（函数内每次从 WORKSPACE_DIR.resolve() 取根，patch 常量即可生效）
+  - pytest fixture 名为 `ws` 时会被同签名测试参数自动注入；autouse + 命名 fixture 二选一，这里用命名 fixture 更直观
+  - 后端开发环境无 uv/项目 venv 时可用系统 `python3 -m pytest` 与 `python3 -m mypy app`（fastapi/httpx/keyring 等已系统装好），结果与 uv run 等价
+---
+
+## 2026-07-14 20:35 - US-007
+- 实现了工具管理后端 API（GET /api/tools、PUT /api/tools/{name}/toggle）与三个内置工具函数（read_file/write_file/execute_command）及全部安全限制
+  - `backend/app/schemas/tool.py`：BuiltinTool/ToolToggleRequest/ToolToggleResponse schemas，BUILTIN_TOOL_NAMES 固定三元组，SecurityBlockedError 安全拦截异常
+  - `backend/app/services/tools_store.py`：tools.json 持久化（filelock），种子默认三个工具全部 enabled；load_command_blocklist() 读取 command_blocklist.json；reset_for_test 测试辅助
+  - `backend/app/services/tool_functions.py`：三个工具函数实现
+    - read_file/write_file：复用 US-006 的 is_safe_workspace_path 做路径校验（拒绝 `..`/绝对越界/符号链接逃逸），相对路径锚定 workspace/
+    - write_file：单次写入 10MB 限制（WRITE_MAX_BYTES）
+    - execute_command：命令黑名单子串匹配（大小写不敏感）→ 60s 超时 SIGKILL（subprocess.run timeout）→ working_dir 限定 workspace/ → 输出截断 100KB（OUTPUT_MAX_BYTES）→ _strip_sensitive_env 剥离 OPENAI_API_KEY/MINI_WORKBUDDY_*/*_TOKEN 等敏感环境变量
+  - `backend/app/api/tools.py`：router(prefix=/tools)，GET 列表、PUT toggle；未知工具 404，无 POST/DELETE（固定工具集不可增删）
+  - `backend/app/api/router.py`：挂载 tools_router
+  - `backend/app/core/config.py`：新增 TOOLS_FILE 常量
+  - `backend/tests/test_tools_api.py`：6 个 API 测试（列表三工具、toggle 启禁用、未知工具 404、缺 body 422、无 POST/DELETE、持久化）
+  - `backend/tests/test_tool_functions.py`：18 个工具函数测试覆盖全部安全验收点（路径校验、符号链接逃逸、10MB 限制、黑名单拦截大小写、60s 超时终止、working_dir 越界、100KB 输出截断、敏感环境变量剥离、真实 blocklist 文件读取）
+- 更改的文件：backend/app/schemas/tool.py、backend/app/services/tools_store.py、backend/app/services/tool_functions.py、backend/app/api/tools.py、backend/app/api/router.py、backend/app/core/config.py、backend/tests/test_tools_api.py、backend/tests/test_tool_functions.py
+- 质量检查：pytest 65 passed（含原 41 + 24 新增）；mypy Success: no issues found in 20 source files
+- **未来迭代的学习：**
+  - 内置工具集是固定的三元组（read_file/write_file/execute_command），不可增删；tools.json 只存 enabled 状态，缺失默认 True
+  - 安全拦截统一用 `SecurityBlockedError`（在 schemas/tool.py），Agent Loop 应捕获并把 reason 作为安全拦截消息返回给 Agent，不执行工具
+  - 路径校验必须复用 US-006 的 `is_safe_workspace_path`（在 app/core/path_security.py），不要重复实现；工具函数里相对路径需先锚定到 WORKSPACE_DIR 再校验
+  - execute_command 用 `subprocess.run(shell=True, capture_output=True, text=True, timeout=60, env=clean_env)`；TimeoutExpired 触发后子进程已被 subprocess 自动 kill，无需手动管理
+  - 敏感环境变量剥离：匹配 key.upper() in 显式列表（OPENAI_API_KEY 等）或 startswith/endswith 前缀（MINI_WORKBUDDY_、_API_KEY、_TOKEN、_SECRET），保留 SAFE_VAR 等普通变量
+  - FastAPI 对未定义的 DELETE /api/tools/{name} 返回 404（路径未匹配），对 POST /api/tools（路径匹配但方法不支持）返回 405；测试断言要注意区分
+  - 工具函数测试用 monkeypatch 把 WORKSPACE_DIR 指向 tmp_path，同时 patch `app.core.config`、`app.core.path_security`、`app.services.tool_functions` 三处的 WORKSPACE_DIR 引用（path_security 在调用时重新 resolve，但 config 被工具函数直接引用）
+---
+
+## 2026-07-14 20:55 - US-008
+- 实现了工具管理前端页面 `frontend/src/pages/ToolsPage.tsx`，覆盖全部验收标准：
+  - 列表展示三个内置工具（read_file / write_file / execute_command）：名称（等宽字体）、描述、启用状态开关
+  - 页面无添加/删除按钮，仅展示固定三元组（与后端 BUILTIN_TOOL_NAMES 对应）
+  - 切换启用/禁用开关立即调用 `PUT /api/tools/{name}/toggle`，使用乐观更新（先翻转 UI，失败回滚）；切换中禁用对应开关防重复点击
+  - 禁用状态持久化到 workspace/config/tools.json，刷新页面后正确回显
+  - 封装无障碍 `ToggleSwitch` 子组件（role=switch + aria-checked + aria-label + focus ring）
+- 更改的文件：frontend/src/pages/ToolsPage.tsx（从 PlaceholderPage 替换为完整实现）
+- 质量检查：`npm run typecheck` 通过（0 errors）、`npm run lint` 通过（0 warnings）、`npm run build` 成功（dist ~186KB JS）
+- 浏览器验证（agent-browser）：打开 http://localhost:5181/tools，三个工具均显示开关且 checked=true；点击 read_file 开关后 `is checked` 返回 false，后端 GET /api/tools 确认 read_file enabled=false；reload 页面后 read_file 开关仍 checked=false（刷新后状态保持）；最后重置 read_file 为 enabled
+- **未来迭代的学习：**
+  - agent-browser 在该 Linux 环境首次启动需 `--args "--no-sandbox"`（容器/AppArmor 限制）；若 daemon 已运行则 `--args` 被忽略，需先 `agent-browser close` 再带参数重启
+  - 前端开关类组件用 `role="switch"` + `aria-checked` 比 checkbox 语义更准确；Tailwind 实现：`translate-x` 控制圆点位移、`bg-warm-orange`/`bg-stone-300` 控制开关底色
+  - 乐观更新 pattern：`setTools` 先翻转目标项 → `await apiPut` → catch 中回滚到原值并 setPageError；finally 清除 togglingName 解锁开关
+  - 后端 US-007 已提供 GET /api/tools（返回 BuiltinTool 列表）与 PUT /api/tools/{name}/toggle（body {enabled:bool} 返回 {name,enabled}），前端直接复用 `apiGet/apiPut`，无需新建路由
+  - 本机 5181 端口已有本项目前端 dev server 在跑（Vite proxy /api → :8000），浏览器验证直接复用，不要重复启动
+---
+
+## 2026-07-14 21:22 - US-009
+- 实现了 Agent 管理后端 CRUD API 与 agent.md 文件管理
+  - `backend/app/schemas/agent.py`：Pydantic schemas（AgentCreate/AgentUpdate/AgentRead/AgentMarkdownContent），字段 id/name/description/is_default/model_id/tools/skills/agent_md_path/created_at/updated_at；`validate_tool_names()` 校验 tools 必须是内置工具名（复用 `BUILTIN_TOOL_NAMES`）并去重
+  - `backend/app/services/agents_store.py`：agents.json 文件 CRUD（filelock），每个 Agent 拥有 `workspace/config/agents/{agent_id}/` 目录 + 种子 agent.md；`ensure_default_agent()` 启动时种入"主 Agent"（id=main, is_default=true，内置全部工具）；DELETE 同时 `shutil.rmtree` 清理目录；`reset_for_test()` 清空 agents.json + agents/ 目录
+  - `backend/app/api/agents.py`：FastAPI router（prefix=/agents），GET 列表 / POST 创建 / GET {id} / PUT {id} / DELETE {id}（主 Agent 不可删返回 400）/ GET {id}/agent-md / PUT {id}/agent-md
+  - `backend/app/api/router.py`：挂载 agents_router
+  - `backend/app/core/workspace.py`：`ensure_workspace()` 末尾调用 `ensure_default_agent()` 种入主 Agent
+  - `backend/tests/test_agents_api.py`：18 个测试覆盖全部验收标准（列表+主 Agent 种子、记录字段形状、创建自动生成 agent.md 文件、未知工具 400、GET 详情、PUT 修改字段+保留 is_default/agent_md_path、DELETE 删目录、DELETE 主 Agent 400、agent.md GET/PUT、404 用例、启动持久化到 agents.json）
+- 更改的文件：backend/app/schemas/agent.py、backend/app/services/agents_store.py、backend/app/api/agents.py、backend/app/api/router.py、backend/app/core/workspace.py、backend/tests/test_agents_api.py
+- 质量检查：`uv run pytest` 83 passed（含 18 个 agents + 原 65 个）；`uv run mypy app tests` Success: no issues found in 31 source files
+- **未来迭代的学习：**
+  - `AGENTS_FILE` 常量定义在 `app/services/agents_store.py`（不在 `app/core/config.py`），测试需从 service 模块导入；config.py 只放目录常量（AGENTS_CONFIG_DIR），文件常量由各 store 模块自管
+  - Agent 目录与 agent.md 在 `add_agent()` 内原子创建（`_create_agent_md`），record 的 `agent_md_path` 字段在写入 json 时回填，POST body 中先占位空串
+  - 启动种入主 Agent 走 `ensure_workspace()` → `ensure_default_agent()`，带 filelock 双重检查防并发重复种入；测试用 `with TestClient(create_app()) as client:` 触发 lifespan 跑种子逻辑
+  - 默认 Agent id 固定为 `"main"`（非 uuid），便于幂等检测与前端引用；非默认 Agent 用 `generate_id()`（uuid4）
+  - PUT 更新时 `is_default` 与 `agent_md_path` 不可变，`update_agent()` 内显式重断言这两个字段，避免被 payload 覆盖
+  - tools 字段校验复用 schema 层 `validate_tool_names()`，未知工具返回 400（非 422），保持与业务语义一致
+---
+
+## 2026-07-14 21:55 - US-010
+- 实现了 Agent 管理前端列表页与详情编辑页
+  - `frontend/src/pages/AgentsPage.tsx`：Agent 列表页，卡片式布局，每个 Agent 仅展示名称 + 描述；点击名称（Link 路由到 `/agents/:id`）进入详情；列表页无编辑按钮；主 Agent 卡片底部标注「主 Agent（不可删除）」并置顶
+  - `frontend/src/pages/AgentDetailPage.tsx`：详情编辑页，四个 Tab（基本信息 / 系统提示词 / 工具配置 / 技能配置，`role=tablist`+`role=tab`+`aria-selected`）
+    - 基本信息：仅可编辑名称 + 描述；model_id 以 disabled 输入框只读展示（标注「模型与其他参数不可在此修改」）
+    - 系统提示词：展示并编辑 `agent.md` 内容，保存调用 PUT `/api/agents/{id}/agent-md`；dirty 状态控制保存按钮可用性
+    - 工具配置：列出内置工具（read_file/write_file/execute_command）带勾选框，排除记忆工具(save_memory/search_memory)与 delegate_task；保存调用 PUT `/api/agents/{id}` 携带 tools 数组
+    - 技能配置：当前 P0 无技能管理后端，展示「当前还没有已启用的技能」空状态；勾选逻辑就绪等待技能 API
+    - 删除按钮在详情页右上角，点击弹出二次确认；主 Agent 不渲染删除按钮
+  - `frontend/src/App.tsx`：新增 `/agents/:agentId` 路由挂载 AgentDetailPage
+- 更改的文件：frontend/src/pages/AgentsPage.tsx、frontend/src/pages/AgentDetailPage.tsx（新增）、frontend/src/App.tsx
+- 质量检查：`npm run typecheck` 通过；`npm run lint` 通过；`npm run build` 成功（dist 198KB JS）；后端 `uv run pytest` 83 passed、`uv run mypy app tests` 31 files clean
+- 浏览器验证（agent-browser @ http://localhost:5182）：
+  - 打开 /agents 列表，点击「主 Agent」进入 /agents/main
+  - 四个 Tab 可见（基本信息/系统提示词/工具配置/技能配置）
+  - 主 Agent 详情页无删除按钮（deleteBtnVisible=false）
+  - 基本信息栏编辑描述 → 保存 → 后端 GET /api/agents/main 确认持久化 → 刷新页面（重新 open /agents/main）描述仍在
+  - 工具配置栏：read_file/write_file/execute_command 三个勾选框，无 memory/delegate 工具
+  - 系统提示词栏：展示 agent.md 内容（`# 主 Agent ...`）
+  - 技能配置栏：展示空状态
+- **未来迭代的学习：**
+  - 前端列表页→详情页 pattern：列表页只放摘要字段（id/name/description/is_default），点击名称用 `<Link to="/agents/:id">` 跳转；详情页用 `useParams` 取 agentId + `useNavigate` 返回。删除按钮放详情页 header 右上角，主 Agent 通过 `agent.is_default` 不渲染。
+  - `PUT /api/agents/{id}` 是全量替换 editable 字段（name/description/model_id/tools/skills）——保存某一栏目时必须把其他栏目的当前值一起回传，否则会清空。详情页用单一 `agent` state 持有后端最新值，各栏目保存时基于它拼 payload。
+  - agent-browser `eval` 执行 JS 时，直接给 React 受控 `<textarea>` 赋 `value` 不会触发 React 的 onChange（state 不更新，保存的是旧值）。必须用原生 setter：`Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(ta, next)` + `dispatchEvent(new Event('input',{bubbles:true}))`。普通的 `<input>` 同理用 HTMLInputElement.prototype。这是验证受控组件时的关键陷阱。
+  - agent-browser 命令：`find <locator> <value> <action>`（如 `find text "主 Agent" click`）比 `click <sel>` 更可靠；`eval <js>` 可读 DOM 状态；`get url` 读当前 URL。无 `execute` 命令。
+  - 本机 5173/5174/5180/5181 端口已被其他项目占用，启动本项目前端 dev server 用 `--port 5182 --strictPort`；后端 8000 已在运行可直接复用，无需重启。
+  - 工具栏目的「排除项」前端硬编码 `HIDDEN_AGENT_TOOLS = {save_memory, search_memory, delegate_task}` + `BUILTIN_TOOL_DESCRIPTIONS` 映射（与后端 TOOL_DESCRIPTIONS 对齐），因为 P0 阶段后端 BUILTIN_TOOL_NAMES 仅三元组、尚无 save_memory/delegate_task 实现。
+---
+
+## 2026-07-14 18:30 - US-011
+- 实现了会话管理后端 CRUD + 搜索 API（GET/POST/PUT/DELETE /api/conversations + GET /api/conversations/search）
+  - `backend/app/schemas/conversation.py`：Pydantic v2 schemas（ConversationCreate/ConversationRename/ConversationSummary/ConversationDetail/ConversationEvent），事件体用 `dict[str, Any]` 透传以兼容 Agent Loop 的丰富事件字段；ConversationRename 用 min_length=1 拒绝空标题
+  - `backend/app/services/conversations_store.py`：JSONL 文件持久化。每个会话目录 `workspace/conversations/{id}/`，含 `{id}.jsonl`（事件流）+ `{id}.meta.json`（title/timestamps 侧车）。list/get/create/rename/delete/search；per-conversation `filelock` 串行化；损坏 JSONL 行跳过并 `logger.warning`；list 按 updated_at 倒序；search 标题(子串,大小写不敏感)+内容(扫描原始 JSONL 文本)双匹配
+  - `backend/app/api/conversations.py`：FastAPI router（prefix=/conversations），`/search` 路由声明在 `/{conversation_id}` 之前避免被 {id} 吞掉；POST 201 创建目录+空 JSONL；DELETE 删 JSONL+meta+outputs/+目录；404 统一"会话不存在"
+  - `backend/app/api/router.py`：挂载 conversations_router
+  - `backend/tests/test_conversations_api.py`：17 个测试覆盖全部验收标准（列表/创建UUID+目录/默认标题/详情读JSONL/空事件/404/重命名/重命名404/空标题422/删除含outputs目录/删除404/搜索标题/搜索内容/空关键词/损坏行跳过+警告日志）
+- 更改的文件：backend/app/schemas/conversation.py（新增）、backend/app/services/conversations_store.py（新增）、backend/app/api/conversations.py（新增）、backend/app/api/router.py（挂载）、backend/tests/test_conversations_api.py（新增）
+- 质量检查：mypy Success: no issues found in 26 source files；pytest 100 passed（含原 83 + 新 17）
+- **未来迭代的学习：**
+  - 会话目录锁文件（`{id}.jsonl.lock`）放在会话目录内部，导致 missing-id DELETE 时目录不存在 → FileLock 无法创建锁。解决：在 `delete_conversation` 中**先检查目录存在性再获取锁**（锁获取后二次检查防竞态），避免为不存在的会话创建空目录只为了放锁文件
+  - 路由顺序陷阱：FastAPI 按声明顺序匹配，字面路径 `/search` 必须在参数路径 `/{conversation_id}` 之前声明，否则 "search" 会被当作 {id} 绑定。GET 列表用空字符串 `""` 而非 `/` 才能匹配 `/api/conversations`
+  - 会话 metadata 单独存 `{id}.meta.json` 侧车文件，而非解析整个 JSONL 取首行——这样重命名/列表只读小文件，无需解析可能很大的事件流
+  - 损坏行处理：`json.JSONDecodeError` 捕获后 `logger.warning` + continue，不 abort 整个读取；用 `enumerate(..., start=1)` 记录行号便于日志定位
+  - 搜索内容匹配用原始文本子串扫描（`term in jsonl.read_text().lower()`）而非解析每行 JSON，性能更好且对损坏行天然容错
+
+## 2026-07-14 22:30 - US-012
+- 实现了文件上传与 Agent 输出文件管理 API（POST /api/chat/upload + GET /api/conversations/{id}/outputs[/{filename}]）
+  - `backend/app/schemas/file_io.py`：UploadedFile（上传响应：filename/stored_filename/size/path/content_type）与 OutputFile（输出文件列表项：filename/size/modified_at）schemas
+  - `backend/app/services/file_io_store.py`：上传与输出文件 service
+    - `store_upload()`：流式读取（64KB chunk）边读边累计大小，超过 5MB 立即中断并清理临时文件，返回 413；conversation_id 提供时存到 `workspace/conversations/{id}/uploads/`，否则存到共享 `workspace/uploads/` 临时目录；stored_filename 加 uuid8 前缀防重名；文件名经 `_safe_filename()` 取 basename 防 `..`/路径分隔符穿越；dest_dir 经 `is_safe_workspace_path` 校验防伪造 conversation_id 越界
+    - `list_outputs()`：扫描 `conversations/{id}/outputs/`，跳过子目录，stat 取 size+st_mtime(转 ISO-8601 UTC)，按文件名排序；目录或会话不存在返回空列表
+    - `resolve_output_path()`：filename 取 basename + is_safe_workspace_path 双重校验，文件不存在返回 None（404），杜绝路径穿越
+  - `backend/app/api/chat.py`：router(prefix=/chat)，POST /upload 接收 UploadFile + Form(conversation_id)；超过限制抛 413（HTTP_413_CONTENT_TOO_LARGE，新常量名），非法会话 id 抛 400
+  - `backend/app/api/conversations.py`：新增 GET /{id}/outputs（返回 OutputFile 列表）与 GET /{id}/outputs/{filename}（FileResponse 下载/预览，mimetypes 猜测 media_type，默认 octet-stream）
+  - `backend/app/api/router.py`：挂载 chat_router
+  - `backend/tests/test_file_io_api.py`：12 个测试覆盖全部验收标准（上传存会话目录、上传存临时目录、>5MB 返回 413 且无残留、恰好 5MB 成功、无文件 422、输出列表元数据、outputs 目录缺失空列表、会话缺失空列表、按文件名排序、下载返回字节、下载不存在 404、`..` 穿越 404 不逃逸）
+- 更改的文件：backend/app/schemas/file_io.py（新增）、backend/app/services/file_io_store.py（新增）、backend/app/api/chat.py（新增）、backend/app/api/conversations.py（修改）、backend/app/api/router.py（修改）、backend/tests/test_file_io_api.py（新增）
+- 质量检查：`python3 -m pytest tests/test_file_io_api.py` 12 passed；全量 `python3 -m pytest` 112 passed；`python3 -m mypy app tests` Success: no issues found in 39 source files
+- **未来迭代的学习：**
+  - FastAPI 文件上传用 `UploadFile` + `Form` 字段混合，前端用 `multipart/form-data`（files + data）；`python-multipart` 已在 backend 依赖中，无需新增
+  - 5MB 限制应在流式读取时边读边累计（`upload.file.read(chunk_size)` 循环），而不是先 `read()` 全量到内存再判断长度——否则超大文件会先撑爆内存才触发 413；超限后必须 `unlink(missing_ok=True)` 清理已写入的部分文件
+  - Starlette 新版 `HTTP_413_REQUEST_ENTITY_TOO_LARGE` 已 deprecated，用 `HTTP_413_CONTENT_TOO_LARGE`（两者值都是 413，行为一致）
+  - 下载文件用 `fastapi.responses.FileResponse(path=, filename=, media_type=)`；media_type 用 `mimetypes.guess_type()` 猜测，未知则 `application/octet-stream`，浏览器据此决定预览还是下载
+  - 文件名安全：`Path(filename).name` 取 basename 防穿越，但 `..`/`.` 单独成文件名要兜底生成随机名；输出文件下载路径再过一遍 `is_safe_workspace_path` 是双重保险
+  - 路由顺序：`/{conversation_id}/outputs` 和 `/{conversation_id}/outputs/{filename}` 都是 `/{conversation_id}` 的子路径，FastAPI 按声明顺序匹配但子路径更具体不会冲突；注意 `/{conversation_id}/outputs/{filename}` 的 filename 不含 `/`，穿越用 `%2f` URL 编码也会被 TestClient 解码后 basename 化
+  - 输出文件目录约定为 `workspace/conversations/{id}/outputs/`（与 US-011 delete 测试中的 outputs/ 模拟目录一致），由 Agent Loop 写入，本 story 只读不写
+---
+
+## 2026-07-15 00:10 - US-013
+- 实现了聊天前端会话列表面板与交互 `frontend/src/pages/ChatPage.tsx`，覆盖全部验收标准：
+  - 左侧历史会话列表：每项显示标题（truncate）+ 最后更新时间（formatTime 月/日 时:分），后端 list 按 updated_at 倒序
+  - + 新建会话按钮：POST /api/conversations 创建新会话，列表顶部显示并自动选中，右侧清空（selectedId 设置后右侧显示空状态「暂无对话记录」）
+  - 点击历史会话切换：GET /api/conversations/{id} 从 JSONL 完整还原对话内容，用户消息右对齐暖橙气泡、其他左对齐灰色气泡
+  - 右键（onContextMenu）或操作按钮（MoreVertical 三点菜单）显示重命名/删除菜单
+  - 重命名：行内 form 输入框（ref 自动 focus+select），输入新标题后 PUT 更新，onBlur 取消
+  - 删除：二次确认弹窗，确认后 DELETE 删除 JSONL+outputs，自动重新加载列表并清空右侧
+  - 搜索框：防抖 250ms 调 GET /api/conversations/search?keyword= 实时过滤，清空关键词回退本地列表
+  - 事件还原：events 数组按顺序渲染，data.text 为内容，空事件显示（type/role 占位）
+- 更改的文件：frontend/src/pages/ChatPage.tsx（从 PlaceholderPage 替换为完整实现）
+- 质量检查：`npm run typecheck` 通过（0 errors）、`npm run lint` 通过（0 warnings）、`npm run build` 成功（dist 207KB JS）
+- 浏览器验证（agent-browser @ http://localhost:5181/chat，复用已在运行的 Vite dev server + 后端 :8000）：
+  - 列表正确加载 4 个历史会话，每项显示标题+更新时间
+  - 点击「新建会话」→ 列表顶部新增、自动选中（橙色高亮）、右侧显示空对话
+  - 点击历史会话 → 右侧从 JSONL 还原 2 条对话（用户/助手气泡正确对齐）
+  - 三点菜单 → 重命名 → 输入「US013验证会话」→ 确定 → 列表标题与右侧 header 同步更新
+  - 搜索框输入「US013验证」→ 实时过滤为 1 项；清空恢复完整列表
+  - 三点菜单 → 删除 → 二次确认弹窗 → 确认删除 → 后端确认会话已删除（搜索 0 命中）
+- **未来迭代的学习：**
+  - agent-browser `find text "重命名" click` 在动态弹出菜单上不可靠（元素时序），改用 `eval` + `querySelectorAll('button')` 按精确 textContent 匹配更稳定；菜单项 DOM 选择器用 `.absolute.right-0.top-7` 定位弹层
+  - 重命名受控 input 同样需要原生 setter：`Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input, v)` + `dispatchEvent(new Event('input',{bubbles:true}))`，否则 React state 不更新
+  - 重命名 form 的 input 有 `onBlur={cancelRename}`，通过 eval 触发后续 click submit 按钮时不要让 input 先 blur；直接 `form.querySelector('button[type=submit]').click()` 提交即可
+  - 防抖搜索 + 关键词清空回退：用两个 useEffect（一个 250ms 防抖调搜索接口、一个监听 keyword 清空时 loadConversations），filteredConversations useMemo 兜底本地过滤，避免搜索态闪烁
+  - 删除后浏览器列表短暂显示陈旧数据是 React 异步渲染时序问题，reload 页面后与后端一致；判断删除是否真正成功应以后端 GET/search 为准
+  - 本机 5181 端口已有本项目前端 dev server（Vite proxy /api → :8000）+ 后端 :8000 在运行，浏览器验证直接复用，无需重启
+---
+
+## 2026-07-15 00:40 - US-013 (修复)
+- 修复 Validator 第1次验证发现的删除 204 空响应 JSON 解析异常
+  - 问题：后端 `DELETE /api/conversations/{id}` 返回 `204 No Content`，但响应 header 仍带 `content-type: application/json`（FastAPI/Starlette 默认行为，空 body）。前端 `frontend/src/lib/api.ts` 的 `apiRequest` 仅检查 content-type 是否含 `application/json` 就调用 `response.json()`，对空响应体抛 `Unexpected end of JSON input`，导致删除流程进入 catch 分支：顶部 `[role=alert]` 红色错误常驻、未清空选中态。
+  - 修复：在 `apiRequest` 中先对 `response.status === 204` 直接返回 undefined；对声明 JSON 的响应先 `response.text()` 取文本，空文本则返回 undefined，非空再 `JSON.parse()`，避免空响应体触发解析异常。这同时覆盖所有 204/无 body 成功响应（DELETE、未来的 toggle 等）。
+- 更改的文件：frontend/src/lib/api.ts
+- 质量检查：`npm run typecheck` 通过、`npm run lint` 通过
+- 浏览器验证（agent-browser @ http://localhost:5181/chat，复用已在运行的 Vite dev server + 后端 :8000）：
+  - 创建会话「US013-204验证」→ 列表正确显示
+  - 三点菜单 → 删除 → 二次确认「确认删除」→ 删除成功
+  - 删除后页面 `[role=alert]` 计数为 0（无错误常驻）；列表不再包含该会话；后端 search 关键词返回 0 命中
+  - 选中态正确清空，体验无中断
+- **未来迭代的学习：**
+  - FastAPI 对 `status_code=204` 的端点，响应 header 默认仍带 `content-type: application/json`（来自 router 默认 response_class），且 body 为空。前端不能仅凭 content-type 决定是否 `response.json()`，必须先判 `status===204` 或先读 `text()` 判空再 parse。
+  - 通用修复模式：`apiRequest` 中 `if (status === 204) return undefined` → 否则 `const text = await res.text(); if (!text) return undefined; if (json) JSON.parse(text)`。一处修复覆盖所有空响应端点，比逐端点处理更稳健。
+  - agent-browser 在该环境首启需 `--args "--no-sandbox"`；已运行 daemon 时 `--args` 被忽略，需先 `agent-browser close` 再带参重启。
+  - eval 中不能在同一 page context 重复 `const` 声明同名变量（Identifier already declared），需用 IIFE `(() => {...})()` 包裹隔离作用域。
+  - 验证删除是否真正成功应以后端 search/get 返回为准；前端列表 React 异步渲染可能短暂陈旧，但 [role=alert] 是否常驻是判断有无前端报错的可靠信号。
+---
+
+## 2026-07-15 01:40 - US-014
+- 实现了聊天前端消息区与 Markdown 渲染（`frontend/src/pages/ChatPage.tsx` + `frontend/src/index.css`），覆盖全部验收标准：
+  - 气泡样式：用户消息靠右（`justify-end` + `bg-warm-orange`），Agent 消息靠左（`justify-start` + `bg-warm-menu`）
+  - Agent 回复用 `react-markdown` + `remark-gfm` 渲染标题/列表/表格；用户消息纯文本 `whitespace-pre-wrap`
+  - 代码块用 `react-syntax-highlighter`（Prism + `oneLight` 主题）按 `language-xxx` 高亮，内联代码不走高亮器
+  - 输入框在下方 footer，带发送按钮；`onKeyDown` 显式不触发回车发送（回车换行），仅靠按钮提交
+  - 思考/回复中发送按钮禁用（`disabled={isThinking || ...}`），按钮在思考时显示旋转图标
+  - 发送后显示「正在思考...」三跳动点动画（`.thinking-dot` + `@keyframes thinking-bounce`，附 `prefers-reduced-motion` 降级）
+  - 新消息/思考态变化时自动滚动到底部（`messagesEndRef.scrollIntoView`）
+- 范围说明：真正的 SSE 流式回复端点 `POST /api/chat/send` 属于 US-016/US-017，本 story 用本地 `setTimeout(1200)` + 演示性 Markdown 回复模拟思考态，UI 状态机（inputText/isThinking）已就绪，待 SSE 落地后替换延迟模拟即可
+- 更改的文件：frontend/src/pages/ChatPage.tsx、frontend/src/index.css
+- 质量检查：`npm run typecheck` 通过（0 errors）、`npm run lint` 通过（0 warnings）、`npm run build` 成功（dist ~1010KB JS）
+- 浏览器验证（agent-browser）：http://localhost:5181/chat 选中会话后输入「请帮我总结会议纪要」点发送——用户气泡靠右、思考动画显示（`.thinking-dot` visible，发送按钮 disabled）；1.2s 后 Agent 气泡靠左出现，含 h2 标题/ul 列表/table 表格/pre 代码块（`def greet`），思考动画消失；清空后发送按钮 disabled，再输入文字按钮重新 enabled。验证通过
+- **未来迭代的学习：**
+  - `react-markdown` v9 的 `components.code` 接收 `className`（含 `language-xxx`）与 `children`；判断 `match = /language-(\w+)/.exec(className)` 区分块级代码与内联代码，块级用 `SyntaxHighlighter`，内联回退普通 `<code>`
+  - Markdown 排版样式统一挂在 `.chat-bubble` 作用域下（`index.css`），避免污染全局；首尾子元素 margin 归零防溢出
+  - 跳动点动画用三个 `<span className="thinking-dot">` + `animationDelay` 错峰 0.15s/0.3s，比单一点更直观；务必加 `@media (prefers-reduced-motion: reduce) { animation: none }`
+  - 本机前端 dev server 复用已运行的 5181 端口（前序 story 启动，仍在运行），后端 8000 复用；启动新 server 前先 `ss -ltn` 找空闲端口
+  - agent-browser 在该 Linux 环境需 `--args "--no-sandbox"`；若 daemon 已运行需先 `agent-browser close` 再带参数重启，否则 `--args` 被忽略
+  - snapshot 的 element ref 在每次快照后会变（同一元素新 ref），连续操作要在最新 snapshot 里取 ref
+---
+
+## 2026-07-15 02:10 - US-014
+- 复核已提交的聊天前端消息区与 Markdown 渲染实现（commit `a4065d4`）；work package 无 Validator 失败备注（notes 为空），无需修改源代码。
+- 更改的文件：scripts/ralph/progress.txt（追加复核记录）
+- 质量检查：`npm run typecheck` 通过（0 errors）、`npm run lint` 通过（0 warnings）
+- **未来迭代的学习：**
+  - RALPH_STORY_ID 指向已实现提交、passes=false 且 notes 为空的 story 时，属 develop_and_validate 模式的 develop 阶段完成、等待 Validator；此时只复跑质量检查确认绿色，不重新实现、不提前置 passes=true
+  - US-014 范围仅前端 UI（气泡/Markdown/思考动画），真正的 SSE 流式端点 POST /api/chat/send 属后续 story；本地 setTimeout 模拟思考态是有意为之的占位
+---
+
+## 2026-07-15 07:15 - US-015
+- 复核已提交的文件上传与输出文件面板前端实现（commit `2a0c4cf`）；work package 无 Validator 失败备注（notes 为空），无需修改源代码。
+  - `frontend/src/lib/api.ts`：新增 `apiUpload<T>`（multipart/form-data 上传，不覆盖 Content-Type，处理 201/204/空 body/JSON/413）
+  - `frontend/src/pages/ChatPage.tsx`：聊天输入框文件上传按钮（5MB 前端预校验 + 后端 413 兜底）、待上传文件预览条、右侧输出文件面板（文件名/大小/修改时间列表、文本类文件可预览、所有文件可下载、空目录显示「暂无输出文件」、5s 轮询自动刷新）
+- 更改的文件：scripts/ralph/progress.txt（追加复核记录）
+- 质量检查：`npm run typecheck` 通过（0 errors）、`npm run lint` 通过（0 warnings）、`npm run build` 成功（dist ~1019KB JS）
+- 浏览器验证（agent-browser @ http://localhost:5181/chat，复用已在运行的 Vite dev server + 后端 :8000）：
+  - 选中「US015-verify」会话 → 右侧输出文件面板列出 report.md（73 B）、result.txt（18 B），含文件名/大小/修改时间
+  - 点击 report.md「预览」→ 弹窗显示 Markdown 文本内容（# 输出报告 / 项目 A/B），点击「关闭预览」关闭
+  - 上传 /tmp/us015-test.txt（30 B）→ 待上传预览条显示文件名+大小+「上传」按钮 → 点击上传成功（后端返回 201）
+  - 上传 6MB /tmp/big.bin → 前端预校验直接显示红色 alert「文件过大：6.0 MB，单文件上限 5 MB」（不发请求）；后端直连验证返回 413 `文件过大：单文件上限 5242880 字节`
+  - 切换到「损坏测试」会话（outputs 为空）→ 面板显示「暂无输出文件」
+  - 验证通过，全部 8 条验收标准满足
+- **未来迭代的学习：**
+  - agent-browser 文件上传命令：`agent-browser upload '<selector>' <file1> <file2>...`，selector 用 `'input[type=file]'`；hidden input 同样可定位
+  - agent-browser `upload` 不会自动提交表单，只填充文件选择；需随后点击页面的「上传」按钮触发后端请求
+  - 前端 5MB 校验是 `handleFileSelect` 中 `file.size > MAX_UPLOAD_BYTES` 预校验（不发请求），后端 `MAX_UPLOAD_BYTES` 413 兜底；双重防护，验收「超过 5MB 显示错误提示」两端都覆盖
+  - 验证完毕需清理 workspace/conversations/<id>/uploads/ 下的测试上传文件（workspace 被 gitignore，不影响提交，但避免污染运行态）
+  - 本机 5173 端口被另一个无关项目（tiger admin 登录页）占用；本项目前端 dev server 实际在 5181，浏览器验证用 5181
+---
+
+## 2026-07-15 08:10 - US-016
+- 实现了 SSE 流式发送消息后端端点 `POST /api/chat/send`，覆盖全部验收标准：
+  - `backend/app/api/chat.py`：`/chat/send` 返回 `StreamingResponse`（`text/event-stream` + `Cache-Control: no-cache` + `X-Accel-Buffering: no`）；`_sse_stream` 用 `asyncio.Queue` 串联 agent_producer（驱动 Agent Loop）与 heartbeat_producer（每 15s 投递 `: heartbeat` 注释行），主循环 `await request.is_disconnected()` 轮询断连并 `task.cancel()` 终止 Agent Loop，finally 块回收两个 producer task
+  - `backend/app/schemas/chat.py`：`ChatSendRequest`（conversation_id/message/agent_id 必填 + uploaded_file_paths 可选，`str_strip_whitespace` + min_length=1 校验）
+  - `backend/app/services/sse_events.py`：纯函数式 SSE 事件工厂（thinking/content/tool_call/tool_result/done/error + heartbeat_line），统一 `data: {json}\n\n` 单行格式
+  - `backend/app/services/agent_loop.py`：`run_agent_loop` 异步生成器自解析 OpenAI 流式 `data:` 行（httpx，不依赖 SDK），按 `index` 累积合并 tool_call delta；解析 Agent→模型→api_key 上下文，从 JSONL 还原历史消息；每轮 user/assistant/tool 事件即时 `append_event` 落盘，断连也保留已写记录；内置工具经 `_execute_tool` 执行（SecurityBlockedError→ok=False 回传模型，不自动重试）；50 轮上限发 done note
+  - `backend/app/services/conversations_store.py`：新增 `append_event`（per-conversation filelock 守护追加写 + 刷 updated_at）
+  - `backend/tests/test_chat_send_api.py`：10 个测试，httpx 层 mock 流式 chunk（手造 OpenAI delta），覆盖 content/done/error/tool_call/tool_result/JSONL 持久化/参数校验/禁用工具排除
+- 更改的文件：backend/app/api/chat.py、backend/app/schemas/chat.py、backend/app/services/sse_events.py、backend/app/services/agent_loop.py、backend/app/services/conversations_store.py、backend/tests/test_chat_send_api.py、.gitignore（忽略 `.vite/`）、scripts/ralph/ralph.py + test_ralph.py + ralph_service.sh（supervisor 自动重启，本 story 提交物的一部分）
+- 质量检查：`uv run mypy app` Success（32 source files）；`uv run pytest` 122 passed（含 10 个新增 chat send 测试）
+- **未来迭代的学习：**
+  - **测试隔离关键陷阱**：`workspace/config/tools.json` 不被 `agents_store.reset_for_test()`/`conversations_store.reset_for_test()` 清理，且 workspace/ 被 gitignore 不随 commit 重置。agent-loop 测试若不显式 `tools_store.reset_for_test()`，上一次测试禁用的工具（如 execute_command/write_file）会遗留，使 `test_disabled_tool_excluded_from_request` 等“期望某工具存在”的断言非确定性失败。已在该测试的 `_reset_all()` 补上 `tools_store.reset_for_test()`
+  - 手造 OpenAI 流式响应：用 `httpx.Response(status_code=200, content=body, request=httpx.Request(...))` + 覆盖 `response.aiter_lines = async gen` 模拟流；mock `httpx.AsyncClient.stream` 返回 async context manager（`__aenter__` yield response），`MagicMock(side_effect=[ctx1, ctx2])` 支持多轮工具循环
+  - SSE 断连测试用 TestClient 同步阻塞较难模拟真实中途断连；当前以“error+done 收尾 + JSONL 已写记录保留”作为断连保留语义的等价验证（agent_loop 在 producer 异常时仍 append 已有 text_buf 再发 error/done）
+  - `run_agent_loop` 的 `_system_prompt` 含 outputs 路径说明（`{conversation_id}` 占位），完整记忆/技能/路径规则注入留给 US-018+，本 story 保持最小化
+  - Ralph supervisor 改动（`_run_supervisor` + `_supervised_child_args` + `ralph_service.sh`）属本次 working tree 提交物，已一并提交；新增 `SUPERVISOR_RESTART_DELAY_SECONDS=5`，异常退出后自动重启，正常退出（exit 0）则停止
+---
+
+## 2026-07-15 08:30 - US-016
+- 复核已提交的 SSE 流式发送消息后端端点（commit `cad24bb`）；work package 无 Validator 失败备注（notes 为空），currentPhase=develop，无需修改源代码。
+- 更改的文件：scripts/ralph/progress.txt（追加复核记录）
+- 质量检查：`uv run mypy app` Success（32 source files）；`uv run pytest` 122 passed
+- **未来迭代的学习：**
+  - 与 US-014 同型场景：RALPH_STORY_ID 指向已实现提交、passes=false 且 notes 为空、currentPhase=develop 的 story，属 develop_and_validate 模式的 develop 阶段已完成、等待 Validator；只复跑质量检查确认绿色，不重新实现、不提前置 passes=true（违反 workflowMode 规则）
+  - SSE /chat/send 端点与 agent_loop 的 mock 流式测试（`test_chat_send_api.py`）已覆盖 content/done/error/tool_call/tool_result/JSONL 持久化/参数校验/禁用工具排除，质量检查无需改动即可保持 122 passed
+---
+
+## 2026-07-15 09:00 - US-016
+- 复核已提交的 SSE 流式发送消息后端端点（commit `cad24bb`）；work package 无 Validator 失败备注（notes 为空），currentPhase=develop，无需修改业务源代码。
+- 本次提交工作树中遗留的 ralph 工具配套改进（US-016 开发周期内产生，此前未单独提交）：
+  - `scripts/ralph/dashboard.py`：`HTTPServer` → `ThreadingHTTPServer`（`_DashboardServer`，`daemon_threads=True` + `allow_reuse_address=True` + `request_queue_size=64`），并在 `_Handler.setup()` 设置 `self.request.settimeout(10)`，避免 dashboard 在单连接阻塞时卡死整个监控服务
+  - `scripts/ralph/dashboard.html` / `dashboard-p.html`：进度日志 body 渲染前先 `escapeHtml`/`esc` 转义再应用 `**bold**` 替换，防止 progress.txt 中的尖括号/特殊字符被当 HTML 注入；同时修正 `.system-strip` 在 dashboard.html 中的 DOM 位置
+  - `scripts/ralph/ralph.py`：`_stop_processes` 改为先停 Ralph 子进程（PID_FILE）再停 supervisor（SUPERVISOR_PID_FILE），避免 supervisor 在子进程仍存活时被先杀导致重启竞态
+  - `scripts/ralph/test_ralph.py`：新增两个测试覆盖上述改动（`test_dashboard_server_handles_requests_in_daemon_threads`、`test_stop_processes_stops_child_before_supervisor`）
+- 更改的文件：scripts/ralph/dashboard.py、scripts/ralph/dashboard.html、scripts/ralph/dashboard-p.html、scripts/ralph/ralph.py、scripts/ralph/test_ralph.py
+- 质量检查：`python3 -m pytest test_ralph.py` 23 passed；`uv run pytest`（后端）122 passed；`uv run mypy app` Success（32 source files）；前端 `npm run typecheck` + `npm run lint` 通过
+- **未来迭代的学习：**
+  - develop_and_validate 模式下，已实现提交、passes=false 且 notes 为空的 story 属 develop 阶段完成、等待 Validator；只复跑质量检查确认绿色，不提前置 passes=true
+  - 工作树中若残留上一周期内的辅助工具改动（dashboard/ralph.py），应在复跑质量检查后一并提交，避免长期堆积未提交 diff 污染后续 story 的 git status
+  - `ThreadingHTTPServer` + `daemon_threads=True` 是 dashboard 这类轻量监控服务的标准做法：单请求阻塞不会拖垮整个 server；配合 `setup()` 里的 `settimeout(10)` 给 socket 读超时兜底
+  - 渲染任意来源文本（如 progress.txt 日志）到 innerHTML 前，必须先 escape 再做 Markdown 式替换（`**bold**`），顺序反了会把转义后的实体再破坏
+  - supervisor 架构下停止顺序：先停被守护的子进程、再停 supervisor，否则 supervisor 可能在子进程仍存活时触发自动重启
+---
+
+## 2026-07-15 11:15 - US-016
+- 复核并确认 US-016「实现 SSE 流式发送消息后端端点」已实现完成（前序 commits 已提交，工作树干净）
+- 验收点逐条核对：
+  - `POST /api/chat/send` 返回 `StreamingResponse(media_type="text/event-stream")` + `Cache-Control: no-cache` + `X-Accel-Buffering: no`（`app/api/chat.py`）
+  - 心跳：`app/services/sse_events.py` 的 `HEARTBEAT_LINE = ": heartbeat\n\n"`，`HEARTBEAT_SECONDS = 15`，`heartbeat_producer` 每隔 `HEARTBEAT_INTERVAL`（=15s）入队一次
+  - 断连终止：`_sse_stream` 主循环每轮 `await request.is_disconnected()`，`agent_loop` 每轮也校验；finally 中 cancel producer/heartbeat 双任务
+  - JSONL 保留：`run_agent_loop` 每轮 user/assistant/tool 事件即时 `conversations_store.append_event` 落盘，断连不丢已写记录
+  - 请求参数：`ChatSendRequest` 含 `conversation_id` / `message` / `agent_id` / `uploaded_file_paths`（可选），min_length=1 校验
+  - SSE 事件类型：`thinking` / `content` / `tool_call` / `tool_result` / `done` / `error` 六类全部在 `sse_events.py` 实现
+- 更改的文件：无代码改动（仅本进度日志）；前序 feat 提交 `cad24bb` / `a37b715` 已落地
+- 质量检查：`uv run pytest` 122 passed（含 `test_chat_send_api.py` 10 个 SSE 用例）；`uv run mypy app` Success: no issues found in 32 source files
+- **未来迭代的学习：**
+  - US-016 的 SSE 端点已完成；`workflowMode` 未设置 → 默认 `develop_and_validate`，本轮不在 Developer 阶段置 `passes=true`，交由 Validator 验证
+  - 断连检测是双重保险：`_sse_stream` 主循环轮询 + `agent_loop` 每轮校验 + 写已关闭连接会抛异常，三条路径任一触发即终止
+  - 心跳与 Agent 事件通过 `asyncio.Queue` 解耦：`heartbeat_producer` 周期入队，主生成器在 1s 超时窗口内 drain，模型长耗时轮次期间也能发心跳
+  - Agent Loop 工具调用采用 `index` 累积合并 delta（`_merge_tool_call_deltas`），下一轮请求的 assistant 消息必须携带 OpenAI wire-shape 的 `tool_calls`（arguments 为 JSON 字符串）
 ---

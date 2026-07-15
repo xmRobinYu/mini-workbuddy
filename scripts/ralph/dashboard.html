@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{AGENT} · skillhub-{PORT} — 干活进度</title>
+<title>{AGENT} · mini-workbuddy-{PORT} — 干活进度</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -104,6 +104,7 @@
     font-size: 10px; padding: 1px 6px; border-radius: 6px; font-weight: 500;
   }
   .story-card .retry { font-size: 10px; font-family: var(--font-mono); color: var(--mac-red); }
+  .story-card .context-limit { font-size: 10px; font-family: var(--font-mono); color: #b45309; }
   .story-card .card-title { font-size: 13px; line-height: 1.4; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .story-card .notes { margin-top: 4px; font-size: 11px; color: hsla(4,90%,58%,0.8); line-height: 1.4; }
   .story-card .timing { margin-top: 4px; font-size: 10px; color: var(--muted); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -149,7 +150,7 @@
 <div class="app">
   <!-- Top Bar -->
   <div class="topbar glass">
-    <div class="title">{AGENT} · skillhub-{PORT} coding 2.0 干活进度</div>
+    <div class="title">{AGENT} · mini-workbuddy-{PORT} coding 2.0 干活进度</div>
     <div class="sep"></div>
     <div class="progress-wrap">
       <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
@@ -162,12 +163,6 @@
       <span id="completedElapsedInfo">Done 0s</span>
     </div>
   </div>
-  <div class="system-strip">
-    <div class="system-chip glass" id="systemCpu">CPU --</div>
-    <div class="system-chip glass" id="systemMem">RSS --</div>
-    <div class="system-chip glass" id="systemHostMem">Host MEM --</div>
-  </div>
-
   <!-- Main -->
   <div class="main">
     <div class="stories-panel glass-lg">
@@ -187,6 +182,11 @@
       <div class="phase-text" id="phaseText">等待启动</div>
     </div>
     <div class="clock" id="clock"></div>
+  </div>
+  <div class="system-strip">
+    <div class="system-chip glass" id="systemCpu">CPU --</div>
+    <div class="system-chip glass" id="systemMem">RSS --</div>
+    <div class="system-chip glass" id="systemHostMem">Host MEM --</div>
   </div>
 </div>
 
@@ -250,6 +250,7 @@ function renderStories(stories, cur) {
             <span class="id">${s.id}</span>
             <span class="badge" style="background:${cfg.badgeBg};color:${cfg.badgeColor}">${cfg.label}</span>
             ${s.retryCount > 0 ? `<span class="retry">×${s.retryCount}</span>` : ''}
+            ${s.contextLimitCount > 0 ? `<span class="context-limit">超限×${s.contextLimitCount}</span>` : ''}
           </div>
           <div class="card-title">${esc(s.title)}</div>
           ${timing}
@@ -268,10 +269,11 @@ function renderLogs(logs) {
     const isLatest = i === secs.length - 1;
     const lines = sec.split('\n');
     const header = lines[0].replace(/^## /, '').trim();
-    const body = lines.slice(1).join('\n').trim().replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    const body = lines.slice(1).join('\n').trim();
+    const bodyHtml = esc(body).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
     return `<div class="log-section ${isLatest ? 'glass-lg' : 'glass'}">
       <div class="log-header ${isLatest ? 'latest' : ''}">${esc(header)}</div>
-      <div class="log-body">${body}</div>
+      <div class="log-body">${bodyHtml}</div>
     </div>`;
   }).join('');
   el.scrollTop = el.scrollHeight;

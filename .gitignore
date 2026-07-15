@@ -15,6 +15,7 @@ scripts/ralph/prd.json.bak
 # Node
 node_modules/
 dist/
+.vite/
 
 # Workspace (runtime data)
 workspace/

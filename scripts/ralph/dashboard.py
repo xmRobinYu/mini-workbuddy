@@ -10,11 +10,12 @@ import webbrowser
 import time
 import os
 import argparse
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import config
 import psutil
+import state_store
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 PRD_FILE = config.get_prd_file()
@@ -60,12 +61,22 @@ def _build_api_response() -> dict:
     project = ""
     branch_name = ""
     stories = []
+    context_limit_events = []
     try:
         source = RUNTIME_PRD_FILE if RUNTIME_PRD_FILE.exists() else PRD_FILE
         prd = json.loads(source.read_text(encoding="utf-8"))
         project = prd.get("project", "")
         branch_name = prd.get("branchName", "")
         stories = prd.get("userStories", [])
+        context_limit_events = state_store.get_context_limit_events(
+            db_path=config.get_state_db_file(PRD_FILE)
+        )
+        counts: dict[str, int] = {}
+        for event in context_limit_events:
+            story_id = str(event["story_id"])
+            counts[story_id] = counts.get(story_id, 0) + 1
+        for story in stories:
+            story["contextLimitCount"] = counts.get(str(story.get("id")), 0)
     except Exception:
         pass
 
@@ -96,6 +107,21 @@ def _build_logs_response() -> dict:
             logs = PROGRESS_FILE.read_text(encoding="utf-8")
     except Exception:
         pass
+    try:
+        events = state_store.get_context_limit_events(
+            db_path=config.get_state_db_file(PRD_FILE)
+        )
+        if events:
+            counts: dict[str, int] = {}
+            lines = ["## Claude 上下文超限日志"]
+            for event in reversed(events):
+                story_id = str(event["story_id"])
+                counts[story_id] = counts.get(story_id, 0) + 1
+                timestamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(event["created_at"]))
+                lines.append(f"- [{timestamp}] {story_id}：上下文超限（累计 ×{counts[story_id]}）")
+            logs = f"{logs.rstrip()}\n\n" + "\n".join(lines) + "\n"
+    except Exception:
+        pass
     return {
         "logs": logs,
     }
@@ -120,6 +146,10 @@ def _build_system_response() -> dict:
 
 
 class _Handler(BaseHTTPRequestHandler):
+    def setup(self) -> None:
+        self.request.settimeout(10)
+        super().setup()
+
     def do_GET(self) -> None:
         path = self.path.split("?")[0]
 
@@ -199,6 +229,12 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
 
+class _DashboardServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+    request_queue_size = 64
+
+
 def start(port: int = 7333, max_iterations: int = 100, open_browser: bool = True, host: str = "127.0.0.1", agent: str = "codex") -> None:
     # 支持通过环境变量 SKILLHUB_PORT 覆盖端口
     env_port = os.environ.get("SKILLHUB_PORT")
@@ -213,7 +249,7 @@ def start(port: int = 7333, max_iterations: int = 100, open_browser: bool = True
         _state["max_iterations"] = max_iterations
         _state["agent"] = agent
 
-    server = HTTPServer((host, port), _Handler)
+    server = _DashboardServer((host, port), _Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
 

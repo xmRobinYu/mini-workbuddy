@@ -18,8 +18,8 @@
         "Typecheck passes"
       ],
       "priority": 1,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "已通过",
       "retryCount": 0,
       "blocked": false
     },
@@ -40,8 +40,8 @@
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "已通过",
       "retryCount": 0,
       "blocked": false
     },
@@ -60,8 +60,8 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "已通过",
       "retryCount": 0,
       "blocked": false
     },
@@ -79,8 +79,8 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "已通过",
       "retryCount": 0,
       "blocked": false
     },
@@ -98,8 +98,8 @@
         "Typecheck passes"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "已通过",
       "retryCount": 0,
       "blocked": false
     },
@@ -118,8 +118,8 @@
         "Typecheck passes"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "已通过",
       "retryCount": 0,
       "blocked": false
     },
@@ -140,8 +140,8 @@
         "Typecheck passes"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "已通过",
       "retryCount": 0,
       "blocked": false
     },
@@ -158,8 +158,8 @@
         "Typecheck passes"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "已通过",
       "retryCount": 0,
       "blocked": false
     },
@@ -180,8 +180,8 @@
         "Typecheck passes"
       ],
       "priority": 9,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "已通过",
       "retryCount": 0,
       "blocked": false
     },
@@ -203,8 +203,8 @@
         "Typecheck passes"
       ],
       "priority": 10,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "已通过",
       "retryCount": 0,
       "blocked": false
     },
@@ -223,8 +223,8 @@
         "Typecheck passes"
       ],
       "priority": 11,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "已通过",
       "retryCount": 0,
       "blocked": false
     },
@@ -241,8 +241,8 @@
         "Typecheck passes"
       ],
       "priority": 12,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "已通过",
       "retryCount": 0,
       "blocked": false
     },
@@ -262,8 +262,8 @@
         "Typecheck passes"
       ],
       "priority": 13,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "已通过",
       "retryCount": 0,
       "blocked": false
     },
@@ -282,8 +282,8 @@
         "Typecheck passes"
       ],
       "priority": 14,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "已通过",
       "retryCount": 0,
       "blocked": false
     },
@@ -302,8 +302,8 @@
         "Typecheck passes"
       ],
       "priority": 15,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "已通过",
       "retryCount": 0,
       "blocked": false
     },
@@ -321,8 +321,8 @@
         "Typecheck passes"
       ],
       "priority": 16,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "已通过：SSE 流式端点已实现，含 15s heartbeat 注释行、客户端断连检测与 Agent Loop 终止、SSE 中断保留已写 JSONL、六类事件（thinking/content/tool_call/tool_result/done/error）。",
       "retryCount": 0,
       "blocked": false
     },

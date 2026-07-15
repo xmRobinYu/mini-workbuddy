@@ -273,6 +273,26 @@ def record_run_event(
         conn.commit()
 
 
+def get_context_limit_events(
+    *,
+    db_path: Path | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    with _connect(db_path) as conn:
+        conn.executescript(SCHEMA_SQL)
+        rows = conn.execute(
+            """
+            SELECT story_id, message, created_at
+            FROM run_events
+            WHERE status = 'context_limit'
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def mark_story_phase_started(
     story_id: str,
     *,

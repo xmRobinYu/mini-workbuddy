@@ -563,7 +563,7 @@ function render() {
     const header = lines[0].replace(/^## /, '').trim();
     const body = lines.slice(1).join('\n').trim();
     const isLatest = i === sections.length - 1;
-    const bodyHtml = body.replace(/\*\*(.*?)\*\*/g, '<span class="log-bold">$1</span>');
+    const bodyHtml = escapeHtml(body).replace(/\*\*(.*?)\*\*/g, '<span class="log-bold">$1</span>');
     html += `<div class="log-section ${isLatest?'log-latest':''}">
       <div class="log-sec-header">${header}</div>
       <div class="log-sec-body">${bodyHtml}</div>
@@ -583,6 +583,12 @@ function render() {
   // Auto-scroll log
   const logBody = document.querySelector('.log-body');
   if (logBody) logBody.scrollTop = logBody.scrollHeight;
+}
+
+function escapeHtml(value) {
+  const element = document.createElement('div');
+  element.textContent = value;
+  return element.innerHTML;
 }
 
 function toggleStory(id) {

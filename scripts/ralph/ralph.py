@@ -22,6 +22,7 @@ import state_store
 MAX_ITERATIONS = 100
 TIMEOUT_SECONDS = 30 * 60
 POLL_INTERVAL_SECONDS = 5
+SUPERVISOR_RESTART_DELAY_SECONDS = 5
 
 # Agent 选择：支持 "claude"、"codex"、"opencode"、"atomcode"
 # 用法：python ralph.py [agent] [model]
@@ -114,7 +115,9 @@ RUNTIME_PRD_FILE = config.get_runtime_prd_file(PRD_FILE)
 STATE_DB_FILE = config.get_state_db_file(PRD_FILE)
 RALPH_AGENT_FILE = SCRIPT_DIR / "ralph-agent.json"
 DASHBOARD_PORT = int(os.environ.get("RALPH_DASHBOARD_PORT", "7334"))
-RUNTIME_DIR = Path(os.environ.get("RALPH_RUNTIME_DIR", Path.home() / "logs" / "skillhub")).resolve()
+RUNTIME_DIR = Path(
+    os.environ.get("RALPH_RUNTIME_DIR", Path.home() / "logs" / PROJECT_ROOT.name)
+).resolve()
 PID_FILE = RUNTIME_DIR / "ralph.pid"
 LOG_FILE = RUNTIME_DIR / "ralph.log"
 SUPERVISOR_PID_FILE = RUNTIME_DIR / "ralph-supervisor.pid"
@@ -136,6 +139,7 @@ class ChildProcessResult:
     exit_code: int | None = None
     timed_out: bool = False
     resolved_externally: bool = False
+    context_limit_exceeded: bool = False
 
 
 def _ensure_runtime_dir() -> None:
@@ -356,10 +360,23 @@ def _terminate_child_process(process: subprocess.Popen, label: str) -> None:
         process.wait()
 
 
+def _relay_claude_output(process: subprocess.Popen, context_limit_event: threading.Event) -> None:
+    if process.stdout is None:
+        return
+
+    for line in process.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        normalized = line.lower()
+        if "context length" in normalized and "exceeds limit" in normalized:
+            context_limit_event.set()
+
+
 def _wait_for_child_process(process: subprocess.Popen,
                             label: str,
                             timeout_seconds: int,
-                            story_id: str | None = None) -> ChildProcessResult:
+                            story_id: str | None = None,
+                            context_limit_event: threading.Event | None = None) -> ChildProcessResult:
     """
     等待子进程结束。
     返回值：是否超时。
@@ -370,6 +387,15 @@ def _wait_for_child_process(process: subprocess.Popen,
     start_time = time.time()
 
     while True:
+        if context_limit_event is not None and context_limit_event.is_set():
+            print(f"\n⚠️  {label} 上下文超限，终止当前 Agent 并在下一轮重新创建")
+            if process.poll() is None:
+                _terminate_child_process(process, label)
+            return ChildProcessResult(
+                exit_code=process.returncode,
+                context_limit_exceeded=True,
+            )
+
         ret_code = process.poll()
         if ret_code is not None:
             if ret_code == 0:
@@ -491,12 +517,27 @@ def run_developer(iteration: int, story_id: str | None) -> ChildProcessResult:
         env["RALPH_STORY_ID"] = story_id
 
     try:
-        process = subprocess.Popen(
-            cmd,
-            cwd=str(PROJECT_ROOT),
-            stdin=subprocess.PIPE if stdin_data is not None else None,
-            env=env,
-        )
+        context_limit_event = threading.Event()
+        popen_kwargs = {
+            "cwd": str(PROJECT_ROOT),
+            "stdin": subprocess.PIPE if stdin_data is not None else None,
+            "env": env,
+        }
+        if AGENT == "claude":
+            popen_kwargs.update(
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        process = subprocess.Popen(cmd, **popen_kwargs)
+
+        if AGENT == "claude":
+            threading.Thread(
+                target=_relay_claude_output,
+                args=(process, context_limit_event),
+                daemon=True,
+            ).start()
 
         if stdin_data is not None:
             def write_stdin():
@@ -511,6 +552,7 @@ def run_developer(iteration: int, story_id: str | None) -> ChildProcessResult:
             "开发 Agent",
             TIMEOUT_SECONDS,
             story_id=story_id,
+            context_limit_event=context_limit_event,
         )
         if result.timed_out:
             print("   进程已终止，将在下一次迭代重试")
@@ -610,12 +652,13 @@ def format_duration(seconds: float) -> str:
         return f"{s}秒"
 
 
-def _write_supervisor_state(status: str, pid: int | None = None) -> None:
+def _write_supervisor_state(status: str, pid: int | None = None, child_pid: int | None = None) -> None:
     _ensure_runtime_dir()
     payload = {
-        "mode": "compat-noop",
+        "mode": "supervisor",
         "status": status,
         "pid": pid,
+        "childPid": child_pid,
         "updatedAt": int(time.time()),
     }
     SUPERVISOR_STATE_FILE.write_text(
@@ -629,7 +672,8 @@ def _write_supervisor_state(status: str, pid: int | None = None) -> None:
 def _detach_process() -> int:
     _ensure_runtime_dir()
     running_pid = _read_pid(PID_FILE)
-    if _is_process_running(running_pid):
+    supervisor_pid = _read_pid(SUPERVISOR_PID_FILE)
+    if _is_process_running(running_pid) or _is_process_running(supervisor_pid):
         print(f"Ralph 已在后台运行，pid={running_pid}")
         return 0
 
@@ -654,6 +698,46 @@ def _detach_process() -> int:
     return 0
 
 
+def _supervised_child_args() -> list[str]:
+    excluded = {"--detach", "--supervise"}
+    return [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        *[arg for arg in sys.argv[1:] if arg not in excluded],
+    ]
+
+
+def _run_supervisor() -> int:
+    _ensure_runtime_dir()
+    _write_pid(SUPERVISOR_PID_FILE, os.getpid())
+    child_args = _supervised_child_args()
+
+    try:
+        while True:
+            child = subprocess.Popen(
+                child_args,
+                cwd=str(PROJECT_ROOT),
+                env=os.environ.copy(),
+            )
+            _write_pid(PID_FILE, child.pid)
+            _write_supervisor_state("running", pid=os.getpid(), child_pid=child.pid)
+            exit_code = child.wait()
+            _clear_pid(PID_FILE)
+
+            if exit_code == 0:
+                _write_supervisor_state("completed", pid=os.getpid())
+                return 0
+
+            _write_supervisor_state("restarting", pid=os.getpid())
+            print(
+                f"Ralph 异常退出 (exit_code={exit_code})，"
+                f"{SUPERVISOR_RESTART_DELAY_SECONDS} 秒后重启..."
+            )
+            time.sleep(SUPERVISOR_RESTART_DELAY_SECONDS)
+    finally:
+        _clear_pid(SUPERVISOR_PID_FILE)
+
+
 def _print_status() -> int:
     pid = _read_pid(PID_FILE)
     running = _is_process_running(pid)
@@ -671,7 +755,7 @@ def _print_status() -> int:
     if supervisor_running:
         print(f"supervisor: running (pid={supervisor_pid})")
     elif SUPERVISOR_STATE_FILE.exists():
-        print("supervisor: compat-noop")
+        print("supervisor: stopped")
     else:
         print("supervisor: stopped")
         if supervisor_pid is not None:
@@ -710,8 +794,8 @@ def _stop_process_from_pid_file(path: Path, label: str) -> bool:
 
 
 def _stop_processes() -> int:
-    stopped_supervisor = _stop_process_from_pid_file(SUPERVISOR_PID_FILE, "Ralph supervisor")
     stopped_ralph = _stop_process_from_pid_file(PID_FILE, "Ralph")
+    stopped_supervisor = _stop_process_from_pid_file(SUPERVISOR_PID_FILE, "Ralph supervisor")
     if not stopped_supervisor and not stopped_ralph:
         print("Ralph 未在运行")
     _write_supervisor_state("stopped")
@@ -725,7 +809,7 @@ def main():
     parser.add_argument("--status", action="store_true", help="输出 Ralph 当前状态")
     parser.add_argument("--stop", action="store_true", help="停止后台 Ralph 进程")
     parser.add_argument("--detach", action="store_true", help="以后台模式启动 Ralph")
-    parser.add_argument("--supervise", action="store_true", help="兼容旧入口，当前作为 no-op 接受")
+    parser.add_argument("--supervise", action="store_true", help="异常退出后自动重启 Ralph")
     parser.add_argument("--remote", action="store_true", help="允许远程访问 Dashboard (绑定 0.0.0.0)")
     parser.add_argument("--story-id", dest="story_id", help="只处理指定 story")
     parser.add_argument("--prd-file", dest="prd_file", help="指定 Ralph 使用的 prd.json 路径")
@@ -785,7 +869,7 @@ def main():
     _ensure_runtime_dir()
     _write_pid(PID_FILE, os.getpid())
     if args.supervise:
-        _write_supervisor_state("running", pid=os.getpid())
+        raise SystemExit(_run_supervisor())
 
     try:
         dashboard.start(port=args.dashboard_port, max_iterations=MAX_ITERATIONS, host=host, open_browser=False, agent=AGENT)
@@ -817,6 +901,24 @@ def main():
                     )
                     dashboard.set_state(iteration=i, phase="developing", current_story=current_story)
                     developer_result = run_developer(i, current_story)
+                    if developer_result.context_limit_exceeded:
+                        state_store.record_run_event(
+                            current_story,
+                            phase="develop",
+                            status="context_limit",
+                            message="Claude 上下文超限，已终止当前 Agent 并将在下一轮重新创建。",
+                            db_path=STATE_DB_FILE,
+                        )
+                        state_store.mark_story_phase_finished(
+                            current_story,
+                            prd_path=PRD_FILE,
+                            db_path=STATE_DB_FILE,
+                            runtime_prd_path=RUNTIME_PRD_FILE,
+                        )
+                        _set_dashboard_idle()
+                        print("⏭️  开发 Agent 上下文超限，下一次迭代将使用新的 Claude Agent 重试...")
+                        time.sleep(2)
+                        continue
                     if developer_result.timed_out:
                         state_store.mark_story_phase_finished(
                             current_story,
@@ -945,8 +1047,6 @@ def main():
         sys.exit(1)
     finally:
         _clear_pid(PID_FILE)
-        if args.supervise:
-            _write_supervisor_state("stopped")
 
 
 if __name__ == "__main__":

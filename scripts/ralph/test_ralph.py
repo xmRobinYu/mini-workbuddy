@@ -40,6 +40,44 @@ def _seed_runtime_state(tmpdir: str, prd_payload: dict) -> tuple[Path, Path, Pat
 
 
 class RalphSequentialFlowTest(unittest.TestCase):
+    def test_supervised_child_args_preserve_runtime_options(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            ["ralph.py", "codex", "--remote", "--detach", "--supervise"],
+        ):
+            args = ralph._supervised_child_args()
+
+        self.assertEqual(args[0], sys.executable)
+        self.assertEqual(args[2:], ["codex", "--remote"])
+
+    def test_supervisor_stops_after_normal_child_completion(self) -> None:
+        class FakeChild:
+            pid = 4321
+
+            def wait(self) -> int:
+                return 0
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_dir = Path(tmpdir)
+            with (
+                patch.object(ralph, "RUNTIME_DIR", runtime_dir),
+                patch.object(ralph, "PID_FILE", runtime_dir / "ralph.pid"),
+                patch.object(ralph, "SUPERVISOR_PID_FILE", runtime_dir / "ralph-supervisor.pid"),
+                patch.object(ralph, "SUPERVISOR_STATE_FILE", runtime_dir / "ralph-supervisor-state.json"),
+                patch.object(ralph, "SUPERVISOR_LOG_FILE", runtime_dir / "ralph-supervisor.log"),
+                patch.object(ralph, "SUPERVISOR_EVENTS_FILE", runtime_dir / "ralph-supervisor-events.jsonl"),
+                patch.object(ralph.subprocess, "Popen", return_value=FakeChild()) as popen,
+            ):
+                result = ralph._run_supervisor()
+
+            state = json.loads((runtime_dir / "ralph-supervisor-state.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result, 0)
+        self.assertEqual(popen.call_count, 1)
+        self.assertEqual(state["status"], "completed")
+        self.assertEqual(state["mode"], "supervisor")
+
     def test_get_current_story_id_returns_first_unresolved_story(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             prd_path, db_path, runtime_path = _seed_runtime_state(
@@ -424,6 +462,12 @@ class RalphSequentialFlowTest(unittest.TestCase):
 
 
 class RalphDashboardStateTest(unittest.TestCase):
+    def test_dashboard_server_handles_requests_in_daemon_threads(self) -> None:
+        self.assertTrue(dashboard_module._DashboardServer.daemon_threads)
+        self.assertTrue(dashboard_module._DashboardServer.allow_reuse_address)
+        self.assertEqual(dashboard_module._DashboardServer.request_queue_size, 64)
+
+
     def test_set_state_tracks_current_story_started_at(self) -> None:
         with patch.object(dashboard_module.time, "time", side_effect=[100, 120]):
             dashboard_module._state.update(
@@ -575,6 +619,17 @@ class RalphDashboardStateTest(unittest.TestCase):
         dashboard_module.PRD_FILE = original_prd
         dashboard_module.RUNTIME_PRD_FILE = original_runtime
         dashboard_module.PROGRESS_FILE = original_progress
+
+
+class RalphProcessControlTest(unittest.TestCase):
+    def test_stop_processes_stops_child_before_supervisor(self) -> None:
+        with patch.object(ralph, "_stop_process_from_pid_file", side_effect=[True, True]) as stop_process:
+            self.assertEqual(ralph._stop_processes(), 0)
+
+        self.assertEqual(
+            [call.args[0] for call in stop_process.call_args_list],
+            [ralph.PID_FILE, ralph.SUPERVISOR_PID_FILE],
+        )
 
 
 if __name__ == "__main__":
