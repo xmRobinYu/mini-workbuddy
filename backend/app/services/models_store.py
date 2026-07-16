@@ -26,6 +26,27 @@ def _ensure_file() -> None:
         MODELS_FILE.write_text("[]", encoding="utf-8")
 
 
+def _migrate_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Backfill/normalise fields so legacy ``models.json`` rows never break reads.
+
+    Older records (pre US-002) lack the ``model`` supplier-model field and the
+    ``is_default`` flag. ``ModelRead`` declares both, so any missing field would
+    raise a pydantic ``ValidationError`` at serialisation time and turn
+    ``GET /api/models`` into a 500. We patch each record on read:
+
+    - ``model``: fall back to the display ``name`` when absent/empty.
+    - ``is_default``: default to ``False`` when absent/non-bool.
+
+    The returned dict is the same object that was passed in (mutated in place),
+    so callers that later write the list back will persist the migration.
+    """
+    if not record.get("model"):
+        record["model"] = record.get("name") or ""
+    if not isinstance(record.get("is_default"), bool):
+        record["is_default"] = False
+    return record
+
+
 def _read_all() -> list[dict[str, Any]]:
     _ensure_file()
     raw = MODELS_FILE.read_text(encoding="utf-8").strip()
@@ -34,7 +55,7 @@ def _read_all() -> list[dict[str, Any]]:
     data = json.loads(raw)
     if not isinstance(data, list):
         return []
-    return [item for item in data if isinstance(item, dict)]
+    return [_migrate_record(item) for item in data if isinstance(item, dict)]
 
 
 def _write_all(models: list[dict[str, Any]]) -> None:

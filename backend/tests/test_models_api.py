@@ -374,6 +374,68 @@ def test_model_field_persisted_and_returned() -> None:
     assert fetched[0]["model"] == "qwen-max"
 
 
+def test_legacy_record_without_model_and_is_default_does_not_500() -> None:
+    """AC robustness: legacy records missing model/is_default must not 500 GET.
+
+    Pre-US-002 records only had {id,name,provider,base_url,api_key_ref,
+    api_key_env,context_window_tokens,created_at,updated_at}. Any such record
+    on disk must not break the list endpoint.
+    """
+    _install_memory_keyring()
+    _reset_models_file()
+    # Seed a legacy-format record directly into models.json.
+    models_store.add_model({
+        "id": "legacy-1",
+        "name": "Legacy DeepSeek",
+        "provider": "deepseek",
+        "base_url": "https://api.deepseek.com/v1",
+        "api_key_ref": "keychain://legacy-1",
+        "api_key_env": None,
+        "context_window_tokens": 64000,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+    })
+    client = TestClient(create_app())
+
+    resp = client.get("/api/models")
+    assert resp.status_code == 200, resp.text
+    models = resp.json()
+    assert len(models) == 1
+    legacy = models[0]
+    # model falls back to the display name; is_default defaults to False.
+    assert legacy["model"] == "Legacy DeepSeek"
+    assert legacy["is_default"] is False
+    # No plaintext key leaks through the legacy record either.
+    assert "api_key" not in legacy
+
+
+def test_legacy_record_set_default_does_not_500() -> None:
+    """AC robustness: PUT /default against a legacy record backfills is_default."""
+    _install_memory_keyring()
+    _reset_models_file()
+    models_store.add_model({
+        "id": "legacy-2",
+        "name": "Legacy Qwen",
+        "provider": "alibaba",
+        "base_url": "https://dashscope.aliyuncs.com/v1",
+        "api_key_ref": None,
+        "api_key_env": "QWEN_API_KEY",
+        "context_window_tokens": 32000,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+    })
+    client = TestClient(create_app())
+
+    resp = client.put("/api/models/legacy-2/default")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["is_default"] is True
+
+    models = client.get("/api/models").json()
+    defaults = [m for m in models if m["is_default"] is True]
+    assert len(defaults) == 1
+    assert defaults[0]["id"] == "legacy-2"
+
+
 def test_model_response_never_contains_plaintext_key() -> None:
     """AC: 读取模型响应永不包含明文 api_key."""
     _install_memory_keyring()
