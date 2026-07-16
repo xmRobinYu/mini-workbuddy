@@ -49,3 +49,16 @@
   - 陷阱：`model_tester` / `agent_loop` 历史上用展示 `name` 当 model 字段发请求，必须显式改成 `model.get("model") or model.get("name")`，否则旧种子数据无 model 时回退 name。
   - workflowMode 未设置 → develop_and_validate，不置 passes=true，交由 Validator。
 ---
+
+## 2026-07-17 06:05 - US-002（修复 Validator 失败，第1次 retry）
+- 修复 Validator 失败项1-3：legacy `models.json` 记录缺少 `model`/`is_default` 字段时，`GET /api/models` 直接返回 HTTP 500（pydantic ValidationError "model Field required"）。
+- `services/models_store.py`：新增私有 `_migrate_record()`，在 `_read_all()` 读取时对每条记录做字段补全——缺 `model` → 回退 `name`（空则空串）、`is_default` 非 bool/缺失 → `False`。确保任何存量/旧格式记录都不会让列表接口 500，同时保证 `set_default_model`/`add_model`/`update_model` 走同一读取路径一致防御。写入的 stored dict 早已显式包含 `model` 与 `is_default`（上次迭代已修），本次只补读路径防御。
+- `tests/test_models_api.py`：新增两个回归测试 `test_legacy_record_without_model_and_is_default_does_not_500`、`test_legacy_record_set_default_does_not_500`，分别覆盖 legacy 记录的 GET 与 `PUT /api/models/{id}/default` 路径，断言 `model` 回退 `name`、`is_default` 默认 False、明文密钥不泄露。
+- 更改的文件：backend/app/services/models_store.py, backend/tests/test_models_api.py
+- 验证：`uv run pytest` 147 passed；`uv run mypy app` Success（34 文件）。新增 2 个测试均通过。
+- **未来迭代的学习：**
+  - pattern：读文件存储的 schema 演进时，必须在**读取层**做向后兼容迁移（`_read_all()` 补字段），不能只靠 schema 默认值——因为 `ModelRead.model_validate(stored_dict)` 在字段 `Field(...)`（必填、无默认）时会抛 ValidationError 直接 500，Pydantic v2 默认值只对“客户端未传该字段”生效，对“磁盘上根本没有该 key”同样生效，但**前提是字段在 schema 里有 default**；`model` 是必填无 default，所以旧记录必崩。读层迁移是唯一兜底。
+  - pattern：迁移函数 mutate in place 并返回原对象，这样 caller 写回 list 时顺带持久化迁移，避免“读到→补→丢”的二次问题。
+  - 陷阱：Validator 用 keychain 不可用（headless）场景 POST 创建记录被迫带 `api_key_env`，但真正的崩溃源是**任意存量旧格式记录**，不是创建路径。修复时要优先看 notes 里的“确凿崩溃路径”。
+  - workflowMode 未设置 → develop_and_validate，不置 passes=true，交由 Validator。
+---
