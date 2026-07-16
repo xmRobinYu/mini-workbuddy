@@ -1,0 +1,627 @@
+{
+  "source": "lovable-single-file-stream",
+  "project_id": "2ddbde15-2b56-460b-a9e2-d4af3f8545b9",
+  "ref": "HEAD",
+  "project_url": "https://lovable.dev/projects/2ddbde15-2b56-460b-a9e2-d4af3f8545b9?view=codeEditor",
+  "project_name": "Work Buddy AI",
+  "exported_at": "2026-07-16T09:03:35.842Z",
+  "file_count": 123,
+  "failed": [],
+  "files": [
+    {
+      "path": ".gitignore",
+      "bytes": 402,
+      "binary": false
+    },
+    {
+      "path": ".lovable/project.json",
+      "bytes": 124,
+      "binary": false
+    },
+    {
+      "path": ".prettierignore",
+      "bytes": 92,
+      "binary": false
+    },
+    {
+      "path": ".prettierrc",
+      "bytes": 90,
+      "binary": false
+    },
+    {
+      "path": "AGENTS.md",
+      "bytes": 480,
+      "binary": false
+    },
+    {
+      "path": "bun.lock",
+      "bytes": 173299,
+      "binary": false
+    },
+    {
+      "path": "bunfig.toml",
+      "bytes": 463,
+      "binary": false
+    },
+    {
+      "path": "components.json",
+      "bytes": 443,
+      "binary": false
+    },
+    {
+      "path": "eslint.config.js",
+      "bytes": 1250,
+      "binary": false
+    },
+    {
+      "path": "package.json",
+      "bytes": 2922,
+      "binary": false
+    },
+    {
+      "path": "public/favicon.ico",
+      "bytes": 20373,
+      "binary": true
+    },
+    {
+      "path": "src/components/accent-picker.tsx",
+      "bytes": 5655,
+      "binary": false
+    },
+    {
+      "path": "src/components/app-sidebar.tsx",
+      "bytes": 5164,
+      "binary": false
+    },
+    {
+      "path": "src/components/color-vision-panel.tsx",
+      "bytes": 14067,
+      "binary": false
+    },
+    {
+      "path": "src/components/connector-binding-editor.tsx",
+      "bytes": 12493,
+      "binary": false
+    },
+    {
+      "path": "src/components/contrast-audit.tsx",
+      "bytes": 6981,
+      "binary": false
+    },
+    {
+      "path": "src/components/contrast-guard.tsx",
+      "bytes": 1703,
+      "binary": false
+    },
+    {
+      "path": "src/components/cvd-picker.tsx",
+      "bytes": 1954,
+      "binary": false
+    },
+    {
+      "path": "src/components/empty-state.tsx",
+      "bytes": 1299,
+      "binary": false
+    },
+    {
+      "path": "src/components/list-toolbar.tsx",
+      "bytes": 2932,
+      "binary": false
+    },
+    {
+      "path": "src/components/page-header.tsx",
+      "bytes": 838,
+      "binary": false
+    },
+    {
+      "path": "src/components/test-detail-dialog.tsx",
+      "bytes": 8300,
+      "binary": false
+    },
+    {
+      "path": "src/components/theme-picker.tsx",
+      "bytes": 13242,
+      "binary": false
+    },
+    {
+      "path": "src/components/theme-toggle.tsx",
+      "bytes": 5339,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/accordion.tsx",
+      "bytes": 2015,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/alert-dialog.tsx",
+      "bytes": 4182,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/alert.tsx",
+      "bytes": 1589,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/aspect-ratio.tsx",
+      "bytes": 143,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/avatar.tsx",
+      "bytes": 1413,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/badge.tsx",
+      "bytes": 1123,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/breadcrumb.tsx",
+      "bytes": 2749,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/button.tsx",
+      "bytes": 1894,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/calendar.tsx",
+      "bytes": 7210,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/card.tsx",
+      "bytes": 1817,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/carousel.tsx",
+      "bytes": 6200,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/chart.tsx",
+      "bytes": 10569,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/checkbox.tsx",
+      "bytes": 1043,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/collapsible.tsx",
+      "bytes": 335,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/command.tsx",
+      "bytes": 4876,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/context-menu.tsx",
+      "bytes": 7391,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/dialog.tsx",
+      "bytes": 3647,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/drawer.tsx",
+      "bytes": 2972,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/dropdown-menu.tsx",
+      "bytes": 7596,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/form.tsx",
+      "bytes": 4201,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/hover-card.tsx",
+      "bytes": 1246,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/input-otp.tsx",
+      "bytes": 2161,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/input.tsx",
+      "bytes": 776,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/label.tsx",
+      "bytes": 716,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/menubar.tsx",
+      "bytes": 8546,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/navigation-menu.tsx",
+      "bytes": 5152,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/pagination.tsx",
+      "bytes": 2739,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/popover.tsx",
+      "bytes": 1352,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/progress.tsx",
+      "bytes": 781,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/radio-group.tsx",
+      "bytes": 1405,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/resizable.tsx",
+      "bytes": 1552,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/scroll-area.tsx",
+      "bytes": 1635,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/select.tsx",
+      "bytes": 5749,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/separator.tsx",
+      "bytes": 723,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/sheet.tsx",
+      "bytes": 4247,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/sidebar.tsx",
+      "bytes": 23975,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/skeleton.tsx",
+      "bytes": 239,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/slider.tsx",
+      "bytes": 1025,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/sonner.tsx",
+      "bytes": 734,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/switch.tsx",
+      "bytes": 1156,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/table.tsx",
+      "bytes": 2820,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/tabs.tsx",
+      "bytes": 1934,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/textarea.tsx",
+      "bytes": 677,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/toggle-group.tsx",
+      "bytes": 1752,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/toggle.tsx",
+      "bytes": 1534,
+      "binary": false
+    },
+    {
+      "path": "src/components/ui/tooltip.tsx",
+      "bytes": 1278,
+      "binary": false
+    },
+    {
+      "path": "src/hooks/use-mobile.tsx",
+      "bytes": 576,
+      "binary": false
+    },
+    {
+      "path": "src/lib/accent.ts",
+      "bytes": 6576,
+      "binary": false
+    },
+    {
+      "path": "src/lib/backup.ts",
+      "bytes": 3635,
+      "binary": false
+    },
+    {
+      "path": "src/lib/connector-backup.ts",
+      "bytes": 5672,
+      "binary": false
+    },
+    {
+      "path": "src/lib/connector-health.ts",
+      "bytes": 8631,
+      "binary": false
+    },
+    {
+      "path": "src/lib/contrast.ts",
+      "bytes": 7103,
+      "binary": false
+    },
+    {
+      "path": "src/lib/cvd.tsx",
+      "bytes": 4353,
+      "binary": false
+    },
+    {
+      "path": "src/lib/error-capture.ts",
+      "bytes": 906,
+      "binary": false
+    },
+    {
+      "path": "src/lib/error-page.ts",
+      "bytes": 2528,
+      "binary": false
+    },
+    {
+      "path": "src/lib/lovable-error-reporting.ts",
+      "bytes": 830,
+      "binary": false
+    },
+    {
+      "path": "src/lib/mock-store.ts",
+      "bytes": 11245,
+      "binary": false
+    },
+    {
+      "path": "src/lib/mock-test.ts",
+      "bytes": 16495,
+      "binary": false
+    },
+    {
+      "path": "src/lib/theme.tsx",
+      "bytes": 4262,
+      "binary": false
+    },
+    {
+      "path": "src/lib/utils.ts",
+      "bytes": 169,
+      "binary": false
+    },
+    {
+      "path": "src/lib/validators.tsx",
+      "bytes": 8219,
+      "binary": false
+    },
+    {
+      "path": "src/lib/webhook-events.ts",
+      "bytes": 6852,
+      "binary": false
+    },
+    {
+      "path": "src/router.tsx",
+      "bytes": 394,
+      "binary": false
+    },
+    {
+      "path": "src/routes/__root.tsx",
+      "bytes": 6346,
+      "binary": false
+    },
+    {
+      "path": "src/routes/agents.tsx",
+      "bytes": 16656,
+      "binary": false
+    },
+    {
+      "path": "src/routes/connectors.tsx",
+      "bytes": 78683,
+      "binary": false
+    },
+    {
+      "path": "src/routes/history.tsx",
+      "bytes": 6960,
+      "binary": false
+    },
+    {
+      "path": "src/routes/index.tsx",
+      "bytes": 27177,
+      "binary": false
+    },
+    {
+      "path": "src/routes/logs.tsx",
+      "bytes": 43997,
+      "binary": false
+    },
+    {
+      "path": "src/routes/memory.tsx",
+      "bytes": 6877,
+      "binary": false
+    },
+    {
+      "path": "src/routes/models.tsx",
+      "bytes": 19547,
+      "binary": false
+    },
+    {
+      "path": "src/routes/README.md",
+      "bytes": 835,
+      "binary": false
+    },
+    {
+      "path": "src/routes/settings.tsx",
+      "bytes": 7212,
+      "binary": false
+    },
+    {
+      "path": "src/routes/skills.tsx",
+      "bytes": 17098,
+      "binary": false
+    },
+    {
+      "path": "src/routes/tokens.tsx",
+      "bytes": 11236,
+      "binary": false
+    },
+    {
+      "path": "src/routes/tools.tsx",
+      "bytes": 14469,
+      "binary": false
+    },
+    {
+      "path": "src/routeTree.gen.ts",
+      "bytes": 7431,
+      "binary": false
+    },
+    {
+      "path": "src/server.ts",
+      "bytes": 2048,
+      "binary": false
+    },
+    {
+      "path": "src/start.ts",
+      "bytes": 619,
+      "binary": false
+    },
+    {
+      "path": "src/styles.css",
+      "bytes": 5751,
+      "binary": false
+    },
+    {
+      "path": "src/styles/tokens.css",
+      "bytes": 5202,
+      "binary": false
+    },
+    {
+      "path": "tests/visual/__pycache__/config.cpython-313.pyc",
+      "bytes": 2413,
+      "binary": false
+    },
+    {
+      "path": "tests/visual/baselines/_manifest.json",
+      "bytes": 789,
+      "binary": false
+    },
+    {
+      "path": "tests/visual/baselines/agents-list-dark.png",
+      "bytes": 154762,
+      "binary": true
+    },
+    {
+      "path": "tests/visual/baselines/agents-list-light.png",
+      "bytes": 153562,
+      "binary": true
+    },
+    {
+      "path": "tests/visual/baselines/agents-new-dialog-dark.png",
+      "bytes": 146783,
+      "binary": true
+    },
+    {
+      "path": "tests/visual/baselines/agents-new-dialog-light.png",
+      "bytes": 154377,
+      "binary": true
+    },
+    {
+      "path": "tests/visual/baselines/logs-detail-drawer-dark.png",
+      "bytes": 174777,
+      "binary": true
+    },
+    {
+      "path": "tests/visual/baselines/logs-detail-drawer-light.png",
+      "bytes": 181277,
+      "binary": true
+    },
+    {
+      "path": "tests/visual/baselines/logs-list-dark.png",
+      "bytes": 143037,
+      "binary": true
+    },
+    {
+      "path": "tests/visual/baselines/logs-list-light.png",
+      "bytes": 142360,
+      "binary": true
+    },
+    {
+      "path": "tests/visual/baselines/models-list-dark.png",
+      "bytes": 127688,
+      "binary": true
+    },
+    {
+      "path": "tests/visual/baselines/models-list-light.png",
+      "bytes": 125729,
+      "binary": true
+    },
+    {
+      "path": "tests/visual/capture.py",
+      "bytes": 3492,
+      "binary": false
+    },
+    {
+      "path": "tests/visual/config.py",
+      "bytes": 1696,
+      "binary": false
+    },
+    {
+      "path": "tests/visual/diff.py",
+      "bytes": 2474,
+      "binary": false
+    },
+    {
+      "path": "tests/visual/README.md",
+      "bytes": 1655,
+      "binary": false
+    },
+    {
+      "path": "tsconfig.json",
+      "bytes": 672,
+      "binary": false
+    },
+    {
+      "path": "vite.config.ts",
+      "bytes": 820,
+      "binary": false
+    }
+  ]
+}

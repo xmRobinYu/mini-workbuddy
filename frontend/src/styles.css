@@ -1,0 +1,175 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+@import "./styles/tokens.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-soft: var(--brand-soft);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-overlay: var(--overlay);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-grid: var(--chart-grid);
+  --color-chart-axis: var(--chart-axis);
+  --font-display: var(--font-display);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html, body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv11";
+  }
+  h1, h2, h3, .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.015em;
+  }
+  code, pre, .font-mono {
+    font-family: var(--font-mono);
+  }
+  /* Inline <code> outside <pre> gets a subtle chip background in both themes */
+  :not(pre) > code {
+    background: var(--color-muted);
+    color: var(--color-foreground);
+    padding: 0.1em 0.35em;
+    border-radius: 0.25rem;
+    font-size: 0.9em;
+    border: 1px solid transparent;
+  }
+  .dark :not(pre) > code {
+    border-color: var(--color-border);
+  }
+  /* Bare <pre> (no utility classes) inherits token surface + border */
+  pre {
+    color: var(--color-foreground);
+  }
+  /* Ensure SVG text/strokes track the current text color unless explicitly set */
+  svg {
+    color: var(--color-foreground);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Theme switch transition                                             */
+/* Only enabled while <html> carries `.theme-transition` (set by the   */
+/* theme provider around a mode swap and removed after ~260ms). Keeps  */
+/* the app static at rest so visual regression captures — which force  */
+/* `transition:none !important` — are unaffected. Also skipped for     */
+/* users with prefers-reduced-motion.                                  */
+/* ------------------------------------------------------------------ */
+html.theme-transition,
+html.theme-transition *,
+html.theme-transition *::before,
+html.theme-transition *::after {
+  transition-property: background-color, color, border-color, fill, stroke, box-shadow, outline-color;
+  transition-duration: 220ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.theme-transition,
+  html.theme-transition *,
+  html.theme-transition *::before,
+  html.theme-transition *::after {
+    transition: none !important;
+  }
+}
+
+/* Table row separators use the border token so dark mode stays legible */
+@utility table-striped {
+  & tbody tr:nth-child(even) {
+    background: var(--color-surface);
+  }
+}
+
+@utility grain-bg {
+  background-image:
+    linear-gradient(to bottom, var(--color-surface), var(--color-background));
+}
+
+@utility card-warm {
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+/* Unified page grid: consistent horizontal gutter + vertical rhythm */
+@utility page-shell {
+  margin-inline: auto;
+  max-width: 72rem; /* 1152px, matches max-w-6xl */
+  padding-inline: 1.5rem;
+  padding-block: 1.25rem 2rem;
+}
+
+@utility page-shell-narrow {
+  margin-inline: auto;
+  max-width: 56rem;
+  padding-inline: 1.5rem;
+  padding-block: 1.25rem 2rem;
+}
+
+/* Section spacing token for stacked blocks inside a page */
+@utility section-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem; /* 20px — replaces ad-hoc mt-6/mt-4 mixing */
+}
+
+/* Compact section heading used above tables and grouped controls */
+@utility section-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted-foreground);
+}

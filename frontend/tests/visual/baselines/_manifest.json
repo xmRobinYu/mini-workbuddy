@@ -1,0 +1,52 @@
+[
+  {
+    "scenario": "logs-list",
+    "theme": "light",
+    "ok": true
+  },
+  {
+    "scenario": "logs-detail-drawer",
+    "theme": "light",
+    "ok": true
+  },
+  {
+    "scenario": "agents-list",
+    "theme": "light",
+    "ok": true
+  },
+  {
+    "scenario": "agents-new-dialog",
+    "theme": "light",
+    "ok": true
+  },
+  {
+    "scenario": "models-list",
+    "theme": "light",
+    "ok": true
+  },
+  {
+    "scenario": "logs-list",
+    "theme": "dark",
+    "ok": true
+  },
+  {
+    "scenario": "logs-detail-drawer",
+    "theme": "dark",
+    "ok": true
+  },
+  {
+    "scenario": "agents-list",
+    "theme": "dark",
+    "ok": true
+  },
+  {
+    "scenario": "agents-new-dialog",
+    "theme": "dark",
+    "ok": true
+  },
+  {
+    "scenario": "models-list",
+    "theme": "dark",
+    "ok": true
+  }
+]
