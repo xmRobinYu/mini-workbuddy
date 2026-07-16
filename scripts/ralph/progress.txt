@@ -32,3 +32,20 @@
   - 陷阱：根目录 `npm run lint` 报 800 条 prettier 错误是仓库既有状态，非本次引入；质量门只需保证新增/改动文件 lint 干净（`eslint src/lib/api`）。
   - workflowMode 未设置 → 默认 `develop_and_validate`，开发阶段不置 `passes=true`，交由 Validator。
 ---
+
+
+## 2026-07-17 05:09 - US-002
+- 实现了后端模型配置的供应商 `model` 字段与 `is_default` 默认模型标记。
+- `schemas/model.py`：`ModelBase` 增加 `model:str`（必填，1-200，供应商模型名）与 `is_default:bool`（默认 False）；`ModelCreate/ModelUpdate/ModelRead` 自动继承。
+- `services/models_store.py`：新增 `get_default_model()` 与 `set_default_model(id)`——后者在单次 filelock 写入内清除其余 `is_default`，保证“全局至多一个默认”不变式；新增私有 `_now_iso()` 避免 store 反向依赖 schema。
+- `api/models.py`：POST/PUT 存取 `model`/`is_default`；新增 `PUT /api/models/{id}/default` 端点；`_apply_default_flag()` 在创建时按需触发 set_default。
+- `services/model_tester.py` & `services/agent_loop.py`：调用 chat/completions 时改用 `model.get("model") or model.get("name")`，不再用展示 name。
+- 更改的文件：backend/app/schemas/model.py, backend/app/services/models_store.py, backend/app/api/models.py, backend/app/services/model_tester.py, backend/app/services/agent_loop.py, backend/tests/test_models_api.py, backend/tests/test_models_test_api.py, backend/tests/test_chat_send_api.py
+- 验证：`uv run pytest` 145 passed；`uv run mypy app` Success（34 文件）。新增/补充测试覆盖 model 必填、is_default 互斥、PUT default、明文密钥不泄露、probe 使用供应商模型名等 AC。
+- 读取响应永不包含明文 api_key（ModelRead 仅暴露 api_key_ref/api_key_env）。
+- **未来迭代的学习：**
+  - pattern：默认模型互斥逻辑放在 `models_store.set_default_model` 单次 locked write，API 层只做调用与 404 判断；保持 store 是唯一写 models.json 的层。
+  - pattern：store 层不 import schema（避免循环），用本地 `_now_iso()`；schema 也有公共 `now_iso()`，二者格式一致。
+  - 陷阱：`model_tester` / `agent_loop` 历史上用展示 `name` 当 model 字段发请求，必须显式改成 `model.get("model") or model.get("name")`，否则旧种子数据无 model 时回退 name。
+  - workflowMode 未设置 → develop_and_validate，不置 passes=true，交由 Validator。
+---
