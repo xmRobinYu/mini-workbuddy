@@ -99,6 +99,48 @@ def generate_id() -> str:
     return str(uuid.uuid4())
 
 
+def get_default_model() -> dict[str, Any] | None:
+    """Return the model flagged ``is_default=True``, or ``None`` if none."""
+    for model in list_models():
+        if model.get("is_default") is True:
+            return model
+    return None
+
+
+def set_default_model(model_id: str) -> dict[str, Any] | None:
+    """Flag ``model_id`` as the sole default model.
+
+    Clears ``is_default`` on every other model in a single locked write so the
+    "at most one default" invariant always holds. Returns the updated model
+    dict, or ``None`` when ``model_id`` does not exist.
+    """
+    lock = FileLock(str(LOCK_FILE))
+    with lock:
+        models = _read_all()
+        found = False
+        for model in models:
+            if model.get("id") == model_id:
+                model["is_default"] = True
+                model["updated_at"] = _now_iso()
+                found = True
+            elif model.get("is_default") is True:
+                model["is_default"] = False
+        if not found:
+            return None
+        _write_all(models)
+        for model in models:
+            if model.get("id") == model_id:
+                return model
+        return None  # pragma: no cover - found implies present
+
+
+def _now_iso() -> str:
+    """Current UTC ISO-8601 timestamp (avoids importing schema into store)."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
 def reset_for_test(models_file: Path | None = None) -> None:
     """Test helper: wipe models.json so each test starts from an empty list."""
     target = models_file or MODELS_FILE

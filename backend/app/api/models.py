@@ -1,10 +1,11 @@
 """Model management CRUD API.
 
 Endpoints:
-- GET    /api/models          list all configured models
-- POST   /api/models          add a model (key stored in OS keychain)
-- PUT    /api/models/{id}     replace a model config
-- DELETE /api/models/{id}     remove a model config
+- GET    /api/models                list all configured models
+- POST   /api/models                add a model (key stored in OS keychain)
+- PUT    /api/models/{id}           replace a model config
+- DELETE /api/models/{id}           remove a model config
+- PUT    /api/models/{id}/default   mark a model as the sole global default
 
 Plaintext API keys are never persisted to ``models.json``; they are stored in
 the OS keychain and referenced via ``keychain://<id>``. When the keychain is
@@ -33,6 +34,7 @@ from app.services.models_store import (
     generate_id,
     get_model,
     list_models,
+    set_default_model,
     update_model,
 )
 from app.services.model_tester import test_model_connection
@@ -64,6 +66,21 @@ def _store_secret(model_id: str, api_key: str, api_key_env: str | None) -> tuple
         return None, api_key_env
 
 
+def _apply_default_flag(
+    created_id: str, is_default: bool, created: dict[str, Any]
+) -> dict[str, Any]:
+    """When ``is_default`` is requested, clear other defaults atomically.
+
+    Returns the freshly created model dict (re-read after the default update so
+    the returned payload reflects the committed state). For ``is_default=False``
+    the model is returned unchanged.
+    """
+    if not is_default:
+        return created
+    updated = set_default_model(created_id)
+    return updated if updated is not None else created
+
+
 @router.get("", response_model=list[ModelRead])
 async def list_models_endpoint() -> list[ModelRead]:
     """Return all configured models from models.json (no plaintext keys)."""
@@ -79,15 +96,18 @@ async def create_model_endpoint(payload: ModelCreate) -> ModelRead:
     stored = {
         "id": model_id,
         "name": payload.name,
+        "model": payload.model,
         "provider": payload.provider.value,
         "base_url": str(payload.base_url),
         "api_key_ref": api_key_ref,
         "api_key_env": api_key_env,
         "context_window_tokens": payload.context_window_tokens,
+        "is_default": payload.is_default,
         "created_at": timestamp,
         "updated_at": timestamp,
     }
     add_model(stored)
+    stored = _apply_default_flag(model_id, payload.is_default, stored)
     return _serialise(stored)
 
 
@@ -113,15 +133,35 @@ async def update_model_endpoint(model_id: str, payload: ModelUpdate) -> ModelRea
 
     updates = {
         "name": payload.name,
+        "model": payload.model,
         "provider": payload.provider.value,
         "base_url": str(payload.base_url),
         "api_key_ref": api_key_ref,
         "api_key_env": api_key_env,
         "context_window_tokens": payload.context_window_tokens,
+        "is_default": payload.is_default,
         "updated_at": now_iso(),
     }
     updated = update_model(model_id, updates)
     if updated is None:  # pragma: no cover - race with DELETE
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="模型不存在"
+        )
+    if payload.is_default:
+        flagged = set_default_model(model_id)
+        if flagged is not None:
+            updated = flagged
+    return _serialise(updated)
+
+
+@router.put("/{model_id}/default", response_model=ModelRead)
+async def set_default_model_endpoint(model_id: str) -> ModelRead:
+    """Mark ``model_id`` as the sole global default model.
+
+    Clears ``is_default`` on every other model in a single locked write.
+    """
+    updated = set_default_model(model_id)
+    if updated is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="模型不存在"
         )

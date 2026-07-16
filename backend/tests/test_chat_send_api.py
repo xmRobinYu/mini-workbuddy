@@ -85,6 +85,7 @@ def _create_model(client: TestClient) -> str:
         "/api/models",
         json={
             "name": "test-model",
+            "model": "test-supplier-model",
             "provider": "custom",
             "base_url": "https://api.example.com/v1",
             "api_key": "sk-test-key",

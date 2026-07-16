@@ -34,11 +34,18 @@ class ModelBase(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., min_length=1, max_length=100, description="模型显示名称")
+    model: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="供应商模型名（如 deepseek-chat），调用 chat/completions 时使用",
+    )
     provider: ModelProvider = Field(..., description="模型供应商")
     base_url: HttpUrl = Field(..., description="模型 API 基础 URL")
     context_window_tokens: int = Field(
         ..., gt=0, le=2_000_000, description="上下文窗口 token 数（正整数）"
     )
+    is_default: bool = Field(default=False, description="是否为全局默认模型")
 
 
 class ModelCreate(ModelBase):
