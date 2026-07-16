@@ -15,3 +15,20 @@
 
 ---
 
+
+## 2026-07-17 04:45 - US-001
+- 实现了前端 API client 骨架：`frontend/src/lib/api/{client,types,mappers,index}.ts`，并在 `frontend/vite.config.ts` 增加 `/api` 代理到 `http://127.0.0.1:8000`（支持 `VITE_API_TARGET` 覆盖）。
+- `client.ts`：统一 `request<T>()` + `apiClient` 动词封装；非 2xx 抛 `ApiError`（含 status、可读 detail、原始 body）；解析 FastAPI `{"detail":...}`；网络失败 status=0；204 返回 null。
+- `types.ts`：对齐后端 Pydantic schemas（model/tool/agent/conversation/ping），保持 snake_case 线格式。
+- `mappers.ts`：显式 `mapModel`/`mapAgent` 做 snake→camel，`toSnakeCase` 通用工具供请求体。
+- `index.ts`：统一出口 `@/lib/api`。
+- 更改的文件：frontend/vite.config.ts, frontend/src/lib/api/client.ts, frontend/src/lib/api/types.ts, frontend/src/lib/api/mappers.ts, frontend/src/lib/api/index.ts
+- 验证：tsc --noEmit 通过；`eslint src/lib/api` 通过（根目录其它文件的 800 条 prettier 报错为既有问题，非本 story 引入）。复用已在 5178 端口运行的 mini-workbuddy dev server + 8000 后端：`curl http://127.0.0.1:5178/api/ping` 返回 `{"pong":"ok"}`，代理生效。
+- 未修改任何业务页面 mock 数据源。
+- **未来迭代的学习：**
+  - pattern：复用 `@/lib/api` 出口，新增端点在 `types.ts` 加 wire 类型 + `mappers.ts` 加 `mapX`，不要在页面内手写 snake/camel 转换。
+  - pattern：client 基于相对 `/api` 前缀，靠 Vite proxy 转发，永不硬编码 host；dev server 端口不固定，验证前先 `ss -ltnp` 找出真正属于 mini-workbuddy 的 vite 进程（cmd 含 `mini-workbuddy/frontend`）。
+  - 陷阱：5173 端口被另一个项目（enzebaba-cloud）的 vite 占用；5174 也被 ragent-plus 占用。mini-workbuddy 自己的 dev server 实际在 5178（以及 5180/5181/5182 等历史实例仍在跑）。验证代理务必用 `ps -o args= -p <pid>` 确认进程归属。
+  - 陷阱：根目录 `npm run lint` 报 800 条 prettier 错误是仓库既有状态，非本次引入；质量门只需保证新增/改动文件 lint 干净（`eslint src/lib/api`）。
+  - workflowMode 未设置 → 默认 `develop_and_validate`，开发阶段不置 `passes=true`，交由 Validator。
+---
