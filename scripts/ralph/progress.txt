@@ -12,6 +12,7 @@
 - Skills are directories under `workspace/config/skills/{id}/SKILL.md`; management API is still missing at start of this feature.
 - Chat send is SSE via `POST /api/chat/send`; frontend must stream with fetch and map events to UI parts.
 - Only edit `frontend/`, not `frontend-bak/`.
+- Keep API payload conversion in a domain facade under `frontend/src/lib/api/`; pages should use mapped ViewModels and never retain server-backed configuration in a mock store.
 
 ---
 
@@ -48,6 +49,18 @@
   - pattern：store 层不 import schema（避免循环），用本地 `_now_iso()`；schema 也有公共 `now_iso()`，二者格式一致。
   - 陷阱：`model_tester` / `agent_loop` 历史上用展示 `name` 当 model 字段发请求，必须显式改成 `model.get("model") or model.get("name")`，否则旧种子数据无 model 时回退 name。
   - workflowMode 未设置 → develop_and_validate，不置 passes=true，交由 Validator。
+---
+
+## 2026-07-17 13:56 - US-003
+- 将 `frontend/src/routes/models.tsx` 切换为真实 `/api/models` 数据源：列表、创建、编辑、删除、连接测试与设默认均调用后端；不再读取或写入 `modelsStore` / `localStorage`。
+- 新增 `frontend/src/lib/api/models.ts`，集中处理模型 API、`Model ID` 与后端 `model` 的映射、以及 `128k` / `1M` 上下文字符串和 `context_window_tokens` 的转换；同步补全 API wire 类型与 ViewModel。
+- API Key 只保存在表单内并在提交时发送，读取响应只用于显示“已配置”占位，不会将明文写入浏览器存储。测试成功和失败都以列表状态及 toast 展示。
+- 更改的文件：`frontend/src/routes/models.tsx`，`frontend/src/lib/api/{models,index,mappers,types}.ts`。
+- 验证：`npx prettier --write`（改动文件）、`npx eslint`（改动文件）、`npx tsc -b --noEmit`、`npm run build`、`git diff --check` 均通过；`5175/api/models` 与 `8000/api/models` 都返回同一真实后端数据。尝试用 agent-browser 访问隔离 Vite 服务，但容器在首次 SSR 编译后终止该后台进程，未能完成浏览器交互验证，需在正常开发环境手动打开 `/models` 复核。
+- **未来迭代的学习：**
+  - pattern：模型页的瞬态连接测试状态应保留在组件内存；配置真相源始终是后端 API，测试结果不应伪装成持久化模型配置。
+  - pattern：编辑时 API Key 留空表示保留现有密钥；后端读取模型只返回 `api_key_ref` / `api_key_env`，因此前端绝不能尝试回填密码框。
+  - 陷阱：后端 provider 是 `deepseek` / `alibaba` / `custom` 枚举，UI 必须提交该值而不是展示标签；`Model ID` 对应后端必填字段 `model`。
 ---
 
 ## 2026-07-17 06:05 - US-002（修复 Validator 失败，第1次 retry）
