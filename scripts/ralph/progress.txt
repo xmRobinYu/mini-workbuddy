@@ -14,6 +14,7 @@
 - Only edit `frontend/`, not `frontend-bak/`.
 - Keep API payload conversion in a domain facade under `frontend/src/lib/api/`; pages should use mapped ViewModels and never retain server-backed configuration in a mock store.
 - Radix `DialogContent` should include a concise `DialogDescription` to prevent accessibility warnings in the browser console.
+- When browser-testing header actions, inspect and dismiss persistent Sonner notifications first: they can intercept pointer clicks even when the intended button is enabled.
 
 ---
 
@@ -108,4 +109,15 @@
   - pattern：将后端枚举在 ViewModel 层保持为同一联合类型，表单可直接复用，避免脆弱的 `as` 断言。
   - pattern：Radix `DialogContent` 添加 `DialogDescription`，以可读的简体中文说明满足无障碍语义并避免控制台警告。
   - 陷阱：此环境中常驻的旧 Vite 实例可能直接返回 404；浏览器验收应使用受控的短期 Vite 会话，并等待 `useEffect` 请求完成后再判断真实列表数据。
+---
+
+## 2026-07-18 05:57 - US-003
+- 复核模型页真实 API 集成：`/models` 通过 Vite `/api` 代理请求并显示后端返回的 `env-model` 配置，未回退到前端 mock seed。
+- 使用浏览器验证新增模型对话框：`Model ID` 字段存在，并明确说明其映射到后端 `model` 字段；读取的模型仅显示“密钥已配置”，不暴露 API Key 明文。
+- 更改的文件：`scripts/ralph/progress.txt`。
+- 验证：`npx tsc --noEmit`、`npm run build`、US-003 相关文件的 ESLint 和 Prettier 检查、`git diff --check` 均通过；全仓 `npm run lint` 因 729 条既有 Prettier 错误失败，未修改无关文件。
+- **未来迭代的学习：**
+  - pattern：用 `agent-browser network requests --filter /api/models` 可直接证明模型页使用真实后端数据，而不仅是视觉上有列表。
+  - 陷阱：工作台的持久 Sonner 通知会遮挡右上角操作按钮；浏览器自动化前应先检查遮挡层，必要时以元素事件验证对话框本身。
+  - 有用的上下文：可复用的前端服务位于 `http://127.0.0.1:5192`；`5178` 虽能代理 API，但该实例的 `/models` 路由会返回 404。
 ---
