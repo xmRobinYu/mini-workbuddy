@@ -17,9 +17,12 @@ import type { AgentRead, ModelRead } from "./types";
 export interface ModelViewModel {
   id: string;
   name: string;
+  modelId: string;
   provider: string;
   baseUrl: string;
   contextWindowTokens: number;
+  context: string;
+  isDefault: boolean;
   apiKeyRef: string | null;
   apiKeyEnv: string | null;
   createdAt: string;
@@ -45,14 +48,23 @@ export function mapModel(read: ModelRead): ModelViewModel {
   return {
     id: read.id,
     name: read.name,
+    modelId: read.model,
     provider: read.provider,
     baseUrl: read.base_url,
     contextWindowTokens: read.context_window_tokens,
+    context: formatContextWindow(read.context_window_tokens),
+    isDefault: read.is_default,
     apiKeyRef: read.api_key_ref,
     apiKeyEnv: read.api_key_env,
     createdAt: read.created_at,
     updatedAt: read.updated_at,
   };
+}
+
+export function formatContextWindow(tokens: number): string {
+  if (tokens >= 1_000_000 && tokens % 1_000_000 === 0) return `${tokens / 1_000_000}M`;
+  if (tokens >= 1_000 && tokens % 1_000 === 0) return `${tokens / 1_000}k`;
+  return String(tokens);
 }
 
 export function mapAgent(read: AgentRead): AgentViewModel {

@@ -11,7 +11,9 @@ export * from "./types";
 export {
   mapAgent,
   mapModel,
+  formatContextWindow,
   toSnakeCase,
   type AgentViewModel,
   type ModelViewModel,
 } from "./mappers";
+export { modelsApi, parseContextWindow, type ModelForm } from "./models";

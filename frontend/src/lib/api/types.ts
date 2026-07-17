@@ -24,9 +24,11 @@ export type ModelProvider = "deepseek" | "alibaba" | "custom";
 export interface ModelRead {
   id: string;
   name: string;
+  model: string;
   provider: ModelProvider;
   base_url: string;
   context_window_tokens: number;
+  is_default: boolean;
   api_key_ref: string | null;
   api_key_env: string | null;
   created_at: string;
@@ -35,20 +37,30 @@ export interface ModelRead {
 
 export interface ModelCreate {
   name: string;
+  model: string;
   provider: ModelProvider;
   base_url: string;
   context_window_tokens: number;
+  is_default?: boolean;
   api_key: string;
   api_key_env?: string | null;
 }
 
 export interface ModelUpdate {
   name: string;
+  model: string;
   provider: ModelProvider;
   base_url: string;
   context_window_tokens: number;
+  is_default?: boolean;
   api_key?: string | null;
   api_key_env?: string | null;
+}
+
+export interface ModelTestResult {
+  success: boolean;
+  latency_ms: number | null;
+  error: string | null;
 }
 
 // ── Tools (backend/app/schemas/tool.py) ─────────────────────────────────────
