@@ -13,6 +13,7 @@
 - Chat send is SSE via `POST /api/chat/send`; frontend must stream with fetch and map events to UI parts.
 - Only edit `frontend/`, not `frontend-bak/`.
 - Keep API payload conversion in a domain facade under `frontend/src/lib/api/`; pages should use mapped ViewModels and never retain server-backed configuration in a mock store.
+- Radix `DialogContent` should include a concise `DialogDescription` to prevent accessibility warnings in the browser console.
 
 ---
 
@@ -96,4 +97,15 @@
 - **未来迭代的学习：**
   - pattern：模型列表仅可依据 `api_key_ref` / `api_key_env` 这类安全引用显示密钥配置状态，绝不能回显或缓存 API Key。
   - 陷阱：本容器中的 agent-browser 可能无响应；先使用 Vite `/api` 代理请求验证真实数据链路，并在可用开发环境补做交互验证。
+---
+
+## 2026-07-18 05:42 - US-003
+- 完成模型页真实 API 回归：浏览器从 `/api/models` 加载后端模型记录，列表显示供应商模型 ID、密钥已配置状态与连接操作；新增对话框明确展示必填的 Model ID 及其后端 `model` 字段映射。
+- 收紧 `ModelViewModel.provider` 为后端 `ModelProvider` 联合类型，移除编辑表单的类型断言；为新增/编辑对话框添加简体中文无障碍说明，消除 Radix 浏览器控制台警告。
+- 更改的文件：`frontend/src/lib/api/mappers.ts`、`frontend/src/routes/models.tsx`、`scripts/ralph/progress.txt`。
+- 验证：`prettier --check`、目标文件 ESLint、`tsc -b --noEmit`、`npm run build`、`git diff --check` 均通过；agent-browser 在受控 Vite 会话中验证 `/models` 通过 `/api` 代理显示真实后端数据，且对话框含 Model ID 映射说明和 `DialogDescription`。
+- **未来迭代的学习：**
+  - pattern：将后端枚举在 ViewModel 层保持为同一联合类型，表单可直接复用，避免脆弱的 `as` 断言。
+  - pattern：Radix `DialogContent` 添加 `DialogDescription`，以可读的简体中文说明满足无障碍语义并避免控制台警告。
+  - 陷阱：此环境中常驻的旧 Vite 实例可能直接返回 404；浏览器验收应使用受控的短期 Vite 会话，并等待 `useEffect` 请求完成后再判断真实列表数据。
 ---

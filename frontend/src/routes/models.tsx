@@ -30,6 +30,7 @@ import { ListToolbar } from "@/components/list-toolbar";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -168,7 +169,15 @@ function ModelsPage() {
     try {
       if (editing) {
         const updated = await modelsApi.update(editing.id, form);
-        setModels((current) => current.map((model) => (model.id === updated.id ? updated : model)));
+        setModels((current) =>
+          current.map((model) =>
+            model.id === updated.id
+              ? updated
+              : form.isDefault
+                ? { ...model, isDefault: false }
+                : model,
+          ),
+        );
         toast.success("模型已更新");
       } else {
         const created = await modelsApi.create(form);
@@ -523,7 +532,7 @@ function ModelDialog({
           ? {
               name: model.name,
               modelId: model.modelId,
-              provider: model.provider as ModelProvider,
+              provider: model.provider,
               baseUrl: model.baseUrl,
               context: model.context,
               apiKey: "",
@@ -551,6 +560,9 @@ function ModelDialog({
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{isEdit ? "编辑模型" : "新增模型"}</DialogTitle>
+          <DialogDescription>
+            {isEdit ? "更新模型连接配置。" : "填写模型连接配置以新增一个模型。"}
+          </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-2">
           <Field label="显示名称" hint="用于在列表与调用记录中识别。" error={errors.name}>

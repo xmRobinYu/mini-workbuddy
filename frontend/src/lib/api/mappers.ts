@@ -10,7 +10,7 @@
  * type errors rather than silently dropping data.
  */
 
-import type { AgentRead, ModelRead } from "./types";
+import type { AgentRead, ModelProvider, ModelRead } from "./types";
 
 // ── camelCase view models consumed by the UI ────────────────────────────────
 
@@ -18,7 +18,7 @@ export interface ModelViewModel {
   id: string;
   name: string;
   modelId: string;
-  provider: string;
+  provider: ModelProvider;
   baseUrl: string;
   contextWindowTokens: number;
   context: string;
