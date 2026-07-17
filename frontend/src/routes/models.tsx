@@ -298,10 +298,11 @@ function ModelsPage() {
         </div>
       </div>
       <div className="card-warm mt-3 overflow-hidden">
-        <div className="grid grid-cols-[1.2fr_1fr_1.5fr_0.8fr_0.8fr_auto] items-center gap-4 border-b border-border bg-surface/60 px-4 py-2.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+        <div className="grid grid-cols-[1.2fr_1fr_1.5fr_0.8fr_0.8fr_0.8fr_auto] items-center gap-4 border-b border-border bg-surface/60 px-4 py-2.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
           <div>模型名称</div>
           <div>供应商</div>
           <div>Base URL</div>
+          <div>API Key</div>
           <div>上下文</div>
           <div>状态</div>
           <div className="w-24 text-right">操作</div>
@@ -412,7 +413,7 @@ function ModelRow({
   onDelete: () => void;
 }) {
   return (
-    <div className="group grid grid-cols-[1.2fr_1fr_1.5fr_0.8fr_0.8fr_auto] items-center gap-4 border-b border-border/60 px-4 py-3 text-sm last:border-b-0 hover:bg-accent/30">
+    <div className="group grid grid-cols-[1.2fr_1fr_1.5fr_0.8fr_0.8fr_0.8fr_auto] items-center gap-4 border-b border-border/60 px-4 py-3 text-sm last:border-b-0 hover:bg-accent/30">
       <div className="flex min-w-0 items-center gap-3">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-brand">
           <Cpu className="h-4 w-4" />
@@ -433,6 +434,9 @@ function ModelRow({
       </div>
       <div className="truncate text-[13px] text-muted-foreground">{model.provider}</div>
       <div className="truncate font-mono text-[12px] text-muted-foreground">{model.baseUrl}</div>
+      <div className="text-[11px] text-muted-foreground">
+        {model.apiKeyRef || model.apiKeyEnv ? "密钥已配置" : "密钥未配置"}
+      </div>
       <div className="text-[13px] text-muted-foreground">{model.context}</div>
       <div>
         {status === "ok" ? (

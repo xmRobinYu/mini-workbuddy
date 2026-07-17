@@ -64,6 +64,18 @@
   - workflowMode 未设置 → develop_and_validate，不置 passes=true，交由 Validator。
 ---
 
+## 2026-07-17 19:00 - US-003
+- 将 `frontend/src/routes/models.tsx` 从 `modelsStore` mock 数据迁移到真实 `/api/models` CRUD、连接测试和默认模型接口；加载、空态、请求失败和测试失败均在页面可见。
+- 新增 `frontend/src/lib/api/models.ts`，统一表单与后端字段映射：`modelId` ↔ `model`、`128k` 等上下文文本 ↔ `context_window_tokens`；创建/更新时才发送 API Key，读取结果仅显示密钥配置状态。
+- 更改的文件：`frontend/src/routes/models.tsx`、`frontend/src/lib/api/models.ts`、`frontend/src/lib/api/{index,mappers,types}.ts`。
+- 验证：`npm exec tsc -- -b --noEmit`、受影响文件 `eslint`、`npm run build`、`git diff --check` 通过；`curl http://127.0.0.1:5178/api/models` 经 Vite `/api` 代理返回后端的真实模型记录。
+- 浏览器验证：已启动本地前后端服务并尝试使用 agent-browser 打开 `/models`，但该环境的 agent-browser daemon 无法稳定连接/快照（Chrome sandbox daemon 故障）；需要后续人工浏览器确认对话框交互。
+- **未来迭代的学习：**
+  - pattern：页面持有 API 返回的 ViewModel 作为唯一真相源；创建或设默认成功后同步更新本地列表，避免再次读取或落入 mock-store。
+  - pattern：涉及敏感字段时，用后端的引用字段（`api_key_ref` / `api_key_env`）派生 UI 状态，表单编辑时保持 API Key 空字符串，只有用户重新填写才提交。
+  - 陷阱：此容器的 agent-browser 需要 `--no-sandbox`，但残留 daemon 仍可能使导航和 snapshot 无响应；UI story 的浏览器验收需记录该环境限制，同时保留代理/API 层验证证据。
+---
+
 ## 2026-07-17 13:56 - US-003
 - 将 `frontend/src/routes/models.tsx` 切换为真实 `/api/models` 数据源：列表、创建、编辑、删除、连接测试与设默认均调用后端；不再读取或写入 `modelsStore` / `localStorage`。
 - 新增 `frontend/src/lib/api/models.ts`，集中处理模型 API、`Model ID` 与后端 `model` 的映射、以及 `128k` / `1M` 上下文字符串和 `context_window_tokens` 的转换；同步补全 API wire 类型与 ViewModel。
