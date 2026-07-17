@@ -87,3 +87,13 @@
   - pattern：编辑时 API Key 留空表示保留现有密钥；后端读取模型只返回 `api_key_ref` / `api_key_env`，因此前端绝不能尝试回填密码框。
   - 陷阱：后端 provider 是 `deepseek` / `alibaba` / `custom` 枚举，UI 必须提交该值而不是展示标签；`Model ID` 对应后端必填字段 `model`。
 ---
+
+## 2026-07-18 00:18 - US-003
+- 补全模型列表的 API Key 配置状态列：只根据后端返回的 `api_key_ref` / `api_key_env` 显示“密钥已配置”或“密钥未配置”，不读取、保存或展示明文密钥。
+- 更改的文件：`frontend/src/routes/models.tsx`。
+- 验证：`npm run typecheck`、改动文件的 Prettier 检查与 ESLint、`npm run build`、`git diff --check` 均通过；`http://127.0.0.1:5175/api/models` 经 Vite `/api` 代理返回真实后端模型数据。
+- 浏览器验证：按 `agent-browser` 技能尝试打开 `/models` 并抓取交互快照，但此容器中的 agent-browser 命令无响应，未能取得浏览器快照；需要在正常开发环境手动确认模型页列表与新增/编辑弹窗。
+- **未来迭代的学习：**
+  - pattern：模型列表仅可依据 `api_key_ref` / `api_key_env` 这类安全引用显示密钥配置状态，绝不能回显或缓存 API Key。
+  - 陷阱：本容器中的 agent-browser 可能无响应；先使用 Vite `/api` 代理请求验证真实数据链路，并在可用开发环境补做交互验证。
+---
