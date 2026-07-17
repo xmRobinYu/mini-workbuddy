@@ -51,18 +51,6 @@
   - workflowMode 未设置 → develop_and_validate，不置 passes=true，交由 Validator。
 ---
 
-## 2026-07-17 13:56 - US-003
-- 将 `frontend/src/routes/models.tsx` 切换为真实 `/api/models` 数据源：列表、创建、编辑、删除、连接测试与设默认均调用后端；不再读取或写入 `modelsStore` / `localStorage`。
-- 新增 `frontend/src/lib/api/models.ts`，集中处理模型 API、`Model ID` 与后端 `model` 的映射、以及 `128k` / `1M` 上下文字符串和 `context_window_tokens` 的转换；同步补全 API wire 类型与 ViewModel。
-- API Key 只保存在表单内并在提交时发送，读取响应只用于显示“已配置”占位，不会将明文写入浏览器存储。测试成功和失败都以列表状态及 toast 展示。
-- 更改的文件：`frontend/src/routes/models.tsx`，`frontend/src/lib/api/{models,index,mappers,types}.ts`。
-- 验证：`npx prettier --write`（改动文件）、`npx eslint`（改动文件）、`npx tsc -b --noEmit`、`npm run build`、`git diff --check` 均通过；`5175/api/models` 与 `8000/api/models` 都返回同一真实后端数据。尝试用 agent-browser 访问隔离 Vite 服务，但容器在首次 SSR 编译后终止该后台进程，未能完成浏览器交互验证，需在正常开发环境手动打开 `/models` 复核。
-- **未来迭代的学习：**
-  - pattern：模型页的瞬态连接测试状态应保留在组件内存；配置真相源始终是后端 API，测试结果不应伪装成持久化模型配置。
-  - pattern：编辑时 API Key 留空表示保留现有密钥；后端读取模型只返回 `api_key_ref` / `api_key_env`，因此前端绝不能尝试回填密码框。
-  - 陷阱：后端 provider 是 `deepseek` / `alibaba` / `custom` 枚举，UI 必须提交该值而不是展示标签；`Model ID` 对应后端必填字段 `model`。
----
-
 ## 2026-07-17 06:05 - US-002（修复 Validator 失败，第1次 retry）
 - 修复 Validator 失败项1-3：legacy `models.json` 记录缺少 `model`/`is_default` 字段时，`GET /api/models` 直接返回 HTTP 500（pydantic ValidationError "model Field required"）。
 - `services/models_store.py`：新增私有 `_migrate_record()`，在 `_read_all()` 读取时对每条记录做字段补全——缺 `model` → 回退 `name`（空则空串）、`is_default` 非 bool/缺失 → `False`。确保任何存量/旧格式记录都不会让列表接口 500，同时保证 `set_default_model`/`add_model`/`update_model` 走同一读取路径一致防御。写入的 stored dict 早已显式包含 `model` 与 `is_default`（上次迭代已修），本次只补读路径防御。
@@ -74,4 +62,16 @@
   - pattern：迁移函数 mutate in place 并返回原对象，这样 caller 写回 list 时顺带持久化迁移，避免“读到→补→丢”的二次问题。
   - 陷阱：Validator 用 keychain 不可用（headless）场景 POST 创建记录被迫带 `api_key_env`，但真正的崩溃源是**任意存量旧格式记录**，不是创建路径。修复时要优先看 notes 里的“确凿崩溃路径”。
   - workflowMode 未设置 → develop_and_validate，不置 passes=true，交由 Validator。
+---
+
+## 2026-07-17 13:56 - US-003
+- 将 `frontend/src/routes/models.tsx` 切换为真实 `/api/models` 数据源：列表、创建、编辑、删除、连接测试与设默认均调用后端；不再读取或写入 `modelsStore` / `localStorage`。
+- 新增 `frontend/src/lib/api/models.ts`，集中处理模型 API、`Model ID` 与后端 `model` 的映射、以及 `128k` / `1M` 上下文字符串和 `context_window_tokens` 的转换；同步补全 API wire 类型与 ViewModel。
+- API Key 只保存在表单内并在提交时发送，读取响应只用于显示“已配置”占位，不会将明文写入浏览器存储。测试成功和失败都以列表状态及 toast 展示。
+- 更改的文件：`frontend/src/routes/models.tsx`，`frontend/src/lib/api/{models,index,mappers,types}.ts`。
+- 验证：`npx prettier --write`（改动文件）、`npx eslint`（改动文件）、`npx tsc -b --noEmit`、`npm run build`、`git diff --check` 均通过；`5175/api/models` 与 `8000/api/models` 都返回同一真实后端数据。尝试用 agent-browser 访问隔离 Vite 服务，但容器在首次 SSR 编译后终止该后台进程，未能完成浏览器交互验证，需在正常开发环境手动打开 `/models` 复核。
+- **未来迭代的学习：**
+  - pattern：模型页的瞬态连接测试状态应保留在组件内存；配置真相源始终是后端 API，测试结果不应伪装成持久化模型配置。
+  - pattern：编辑时 API Key 留空表示保留现有密钥；后端读取模型只返回 `api_key_ref` / `api_key_env`，因此前端绝不能尝试回填密码框。
+  - 陷阱：后端 provider 是 `deepseek` / `alibaba` / `custom` 枚举，UI 必须提交该值而不是展示标签；`Model ID` 对应后端必填字段 `model`。
 ---
