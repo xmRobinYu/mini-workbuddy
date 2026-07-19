@@ -26,7 +26,7 @@ import keyring.backend
 import keyring.backends.fail
 from fastapi.testclient import TestClient
 
-from app.core.config import CONVERSATIONS_DIR, MODELS_FILE, TOOLS_FILE, WORKSPACE_DIR
+from app.core.config import CONVERSATIONS_DIR, MODELS_FILE, TOOLS_FILE
 from app.main import create_app
 from app.services import agents_store, conversations_store, models_store
 from app.services.agents_store import AGENTS_FILE
@@ -588,39 +588,52 @@ def test_intermediate_tool_round_text_is_thinking_and_persisted() -> None:
         assert thinking["data"]["text"] == "先检查文件"
 
 
-def test_p0_end_to_end_read_file_stream_and_conversation_restore() -> None:
-    """US-023: mock 模型完整跑通工具调用、SSE 与 JSONL 历史恢复。"""
+def test_closed_loop_stream_outputs_and_conversation_restore() -> None:
+    """US-011: mock 模型闭环跑通三工具、outputs、SSE 与历史恢复。"""
     _install_memory_keyring()
     _reset_all()
-    fixture_path = WORKSPACE_DIR / "us023-e2e-note.md"
-    original_contents = fixture_path.read_text(encoding="utf-8") if fixture_path.exists() else None
-    fixture_contents = "# P0 验收文件\n\n这是 read_file 返回的真实内容。\n"
-    fixture_path.write_text(fixture_contents, encoding="utf-8")
 
     try:
         with TestClient(create_app()) as client:
             model_id = _create_model(client)
             agent = _attach_model_to_default(client, model_id)
             conversation_id = _create_conversation(client)
+            output_path = f"conversations/{conversation_id}/outputs/closed-loop.txt"
+            output_contents = "闭环产物已落盘。\n"
             first_round = _make_stream_response(
                 _tool_call_chunks(
-                    "read_file",
-                    {"path": fixture_path.name},
-                    reasoning="我先读取验收文件。",
+                    "write_file",
+                    {"path": output_path, "content": output_contents},
+                    call_id="write-output",
                 )
             )
             second_round = _make_stream_response(
-                _content_chunks("已读取文件。\n\n**P0 闭环验证完成。**")
+                _tool_call_chunks(
+                    "read_file",
+                    {"path": output_path},
+                    call_id="read-output",
+                )
+            )
+            third_round = _make_stream_response(
+                _tool_call_chunks(
+                    "execute_command",
+                    {"command": "printf closed-loop-command", "working_dir": "."},
+                    call_id="run-command",
+                )
+            )
+            final_round = _make_stream_response(
+                _content_chunks("已写入、读取并校验闭环产物。")
             )
 
             with patch(
-                "httpx.AsyncClient.stream", _stream_mock([first_round, second_round])
+                "httpx.AsyncClient.stream",
+                _stream_mock([first_round, second_round, third_round, final_round]),
             ):
                 response = client.post(
                     "/api/chat/send",
                     json={
                         "conversation_id": conversation_id,
-                        "message": "请读取验收文件并总结",
+                        "message": "请生成并校验闭环产物",
                         "agent_id": agent["id"],
                     },
                 )
@@ -628,45 +641,61 @@ def test_p0_end_to_end_read_file_stream_and_conversation_restore() -> None:
             assert response.status_code == 200
             streamed_events = _sse_chunks(response)
             assert [event["event"] for event in streamed_events] == [
-                "thinking",
+                "tool_call",
+                "tool_result",
+                "tool_call",
+                "tool_result",
                 "tool_call",
                 "tool_result",
                 "content",
                 "done",
             ]
-            assert streamed_events[1]["data"] == {
-                "id": "call_1",
-                "name": "read_file",
-                "arguments": {"path": fixture_path.name},
-            }
-            assert fixture_contents == streamed_events[2]["data"]["result"]
-            assert "已读取文件。\n\n**P0 闭环验证完成。**" == "".join(
+            assert [
+                event["data"]["name"]
+                for event in streamed_events
+                if event["event"] == "tool_call"
+            ] == ["write_file", "read_file", "execute_command"]
+            assert "已写入" in streamed_events[1]["data"]["result"]
+            assert streamed_events[3]["data"]["result"] == output_contents
+            assert "[exit 0] closed-loop-command" in streamed_events[5]["data"]["result"]
+            assert "已写入、读取并校验闭环产物。" == "".join(
                 event["data"]["text"]
                 for event in streamed_events
                 if event["event"] == "content"
             )
+
+            outputs = client.get(f"/api/conversations/{conversation_id}/outputs")
+            assert outputs.status_code == 200
+            assert outputs.json()[0]["filename"] == "closed-loop.txt"
+            assert outputs.json()[0]["size"] == len(output_contents.encode("utf-8"))
+            downloaded = client.get(
+                f"/api/conversations/{conversation_id}/outputs/closed-loop.txt"
+            )
+            assert downloaded.status_code == 200
+            assert downloaded.text == output_contents
 
             restored = client.get(f"/api/conversations/{conversation_id}")
             assert restored.status_code == 200
             restored_events = restored.json()["events"]
             assert [event["type"] for event in restored_events] == [
                 "message",
-                "thinking",
+                "tool_call",
+                "tool_result",
+                "tool_call",
+                "tool_result",
                 "tool_call",
                 "tool_result",
                 "message",
             ]
-            assert restored_events[1]["data"]["text"] == "我先读取验收文件。"
-            restored_call = restored_events[2]["data"]["tool_calls"][0]["function"]
-            assert restored_call["name"] == "read_file"
-            assert json.loads(restored_call["arguments"]) == {"path": fixture_path.name}
-            assert restored_events[3]["data"]["result"] == fixture_contents
-            assert restored_events[4]["data"]["text"].endswith("**P0 闭环验证完成。**")
+            restored_names = [
+                event["data"]["tool_calls"][0]["function"]["name"]
+                for event in restored_events
+                if event["type"] == "tool_call"
+            ]
+            assert restored_names == ["write_file", "read_file", "execute_command"]
+            assert restored_events[-1]["data"]["text"] == "已写入、读取并校验闭环产物。"
     finally:
-        if original_contents is None:
-            fixture_path.unlink(missing_ok=True)
-        else:
-            fixture_path.write_text(original_contents, encoding="utf-8")
+        conversations_store.reset_for_test()
 
 
 def test_tool_round_limit_saves_degradation_summary(monkeypatch: Any) -> None:

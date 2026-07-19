@@ -114,6 +114,20 @@ export interface ConversationDetail extends ConversationSummary {
   events: Array<Record<string, unknown>>;
 }
 
+export interface UploadedFile {
+  filename: string;
+  stored_filename: string;
+  size: number;
+  path: string;
+  content_type: string;
+}
+
+export interface OutputFile {
+  filename: string;
+  size: number;
+  modified_at: string;
+}
+
 // ── Generic envelope ────────────────────────────────────────────────────────
 
 /** FastAPI error body for non-2xx responses. */

@@ -17,3 +17,12 @@ export {
   type ModelViewModel,
 } from "./mappers";
 export { modelsApi, parseContextWindow, type ModelForm } from "./models";
+export {
+  agentsApi,
+  chatApi,
+  conversationsApi,
+  toolsApi,
+  type ChatEvent,
+  type ChatEventName,
+  type ChatSendPayload,
+} from "./chat";

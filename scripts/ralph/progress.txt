@@ -15,6 +15,8 @@
 - Keep API payload conversion in a domain facade under `frontend/src/lib/api/`; pages should use mapped ViewModels and never retain server-backed configuration in a mock store.
 - Radix `DialogContent` should include a concise `DialogDescription` to prevent accessibility warnings in the browser console.
 - When browser-testing header actions, inspect and dismiss persistent Sonner notifications first: they can intercept pointer clicks even when the intended button is enabled.
+- Rebuild chat UI state from persisted JSONL `role`/`type`/`data` records, and merge live SSE `tool_result` events by `tool_call_id`, so refresh and streaming show the same interaction history.
+- Agent configuration spans CRUD metadata and the separate `agent-md` endpoint; persist both when editing so model/tool bindings and the system prompt remain consistent.
 
 ---
 
@@ -120,4 +122,16 @@
   - pattern：用 `agent-browser network requests --filter /api/models` 可直接证明模型页使用真实后端数据，而不仅是视觉上有列表。
   - 陷阱：工作台的持久 Sonner 通知会遮挡右上角操作按钮；浏览器自动化前应先检查遮挡层，必要时以元素事件验证对话框本身。
   - 有用的上下文：可复用的前端服务位于 `http://127.0.0.1:5192`；`5178` 虽能代理 API，但该实例的 `/models` 路由会返回 404。
+---
+
+## 2026-07-19 12:44 - US-011
+- 将聊天主路径切换到真实后端：从 `/api/agents`、`/api/tools`、`/api/conversations` 恢复配置和会话，使用 `POST /api/chat/send` 的 SSE 渲染思考、工具调用、结果与最终内容，并从 outputs API 显示可下载的产物；刷新后会话 JSONL 可重新渲染。
+- 将 Agent 和工具页切换为真实管理接口：Agent 保存模型、内置工具与 `agent.md`，编辑时保留既有 Skills；工具页通过后端开关统一控制可调用状态。
+- 扩展闭环回归测试，以本地 OpenAI 兼容 mock 验证 write_file → read_file → execute_command、SSE、outputs 下载和会话历史恢复。
+- 更改的文件：`backend/tests/test_chat_send_api.py`、`frontend/src/lib/api/{chat,index,types}.ts`、`frontend/src/routes/{agents,index,tools}.tsx`、`scripts/ralph/progress.txt`。
+- 验证：后端 `uv run pytest`（147 passed）、`uv run mypy app` 通过；前端 `tsc -b --noEmit`、`npm run build`、全仓 `npm run lint`、改动文件 ESLint/Prettier 和 `git diff --check` 通过。已按 agent-browser 技能尝试打开 `http://127.0.0.1:5192` 并获取快照，但该环境的 browser daemon 未返回快照；需要在正常开发环境手动复核交互。
+- **未来迭代的学习：**
+  - pattern：聊天 API facade 需要用 fetch reader 解析 POST SSE；`EventSource` 不支持本接口所需的 POST body。
+  - pattern：Agent 表单不能把后端暂未提供管理 API 的 Skills 绑定重置为空，编辑时应保留其原有值。
+  - 陷阱：浏览器 daemon 在本容器可能无响应，即使已有受控 Vite 服务；应保留 mock 闭环后端测试作为可复现的验收证据，并在可用环境补做 UI 操作验证。
 ---
