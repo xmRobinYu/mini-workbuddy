@@ -136,6 +136,16 @@
   - 陷阱：浏览器 daemon 在本容器可能无响应，即使已有受控 Vite 服务；应保留 mock 闭环后端测试作为可复现的验收证据，并在可用环境补做 UI 操作验证。
 ---
 
+## 2026-07-19 17:18 - US-011
+- 完成并复核真实配置到真实对话的闭环：聊天页从后端恢复 Agent、工具和会话；POST SSE 事件驱动思考、工具调用、结果与最终回答；会话输出可下载，刷新后从 JSONL 重建消息与工具结果。
+- 更改的文件：`backend/tests/test_chat_send_api.py`、`frontend/src/lib/api/{chat,index,types}.ts`、`frontend/src/routes/{agents,index,tools}.tsx`。
+- 验证：本地 OpenAI 兼容 mock 闭环测试通过（write_file → read_file → execute_command、SSE、outputs 下载、历史恢复）；`backend` 的 `uv run pytest`、`uv run mypy app`，以及 `frontend` 的 `npm exec tsc -- -b --noEmit`、`npm run build` 均通过；受影响前端文件的 ESLint 与 Prettier 检查通过。全仓 `npm run lint` 仍被 590 个既有 Prettier 问题阻断，未修改无关文件。
+- 浏览器验证：复用 `5192` Vite 与 `8000` 后端，页面从 `/api/conversations`、`/api/agents`、`/api/tools` 真实恢复数据，network 记录确认请求链路；环境中的 browser daemon 随后未返回交互快照，因此实时工具卡片仍需在稳定浏览器环境人工复核。
+- **未来迭代的学习：**
+  - pattern：端到端聊天验证可用本地 OpenAI 兼容 mock 发送分轮 tool_calls，再用 conversation detail 与 outputs 下载断言 SSE、工具执行及刷新恢复的完整闭环。
+  - 陷阱：无 OS keychain 的服务进程必须通过已存在的环境变量引用提供模型密钥；不要在浏览器验收时依赖本地 keyring。
+---
+
 ## 2026-07-19 17:09 - US-011
 - 复核 `a749517` 的闭环实现：聊天、Agent 与工具页均从真实 `/api` 接口恢复配置；聊天页用 POST SSE 渲染工具调用与结果，并通过 outputs 接口显示会话产物。
 - 更改的文件：`scripts/ralph/progress.txt`。
@@ -143,5 +153,15 @@
 - 浏览器：以独立 `agent-browser` 会话打开 `http://127.0.0.1:5192` 和受控 `http://127.0.0.1:5199`，确认前端发出 `/api/conversations`、`/api/agents`、`/api/tools`、`/api/models` 请求并接收真实响应；容器会话随后被重置，未能完成最终点击式 SSE 交互。
 - **未来迭代的学习：**
   - pattern：浏览器验证应使用命名 session，并在启动前传入 `--args "--no-sandbox"`；默认 session 可能被并行任务切换。
-  - 陷阱：全仓 ESLint 当前包含大量既有 Prettier 错误；将 lint 范围限定到本 story 文件，同时保留全仓失败输出作为基线证据。
+- 陷阱：全仓 ESLint 当前包含大量既有 Prettier 错误；将 lint 范围限定到本 story 文件，同时保留全仓失败输出作为基线证据。
+---
+
+## 2026-07-19 17:15 - US-011
+- 复核真实配置到真实对话的闭环实现：聊天页通过 `POST /api/chat/send` 解析 SSE，并从会话与 outputs API 恢复历史、工具结果和产物；Agent、工具管理页均已接入真实后端接口。
+- 更改的文件：`scripts/ralph/progress.txt`。
+- 验证：后端 `uv run pytest`（147 passed）、`uv run mypy app`、前端 `npx tsc -b --noEmit`、`npm run build`、本 story 文件 ESLint 和 `git diff --check` 均通过；全仓 `npm run lint` 仍受 590 个未改动文件的既有 Prettier 错误阻断。
+- 浏览器：复用 `http://127.0.0.1:5192` 与后端 `:8000`，首个快照确认真实聊天页和会话入口已加载；容器 Chromium 随后因 sandbox/daemon 重启而失去响应，最终点击式 SSE 流程需在正常开发环境手动复核。
+- **未来迭代的学习：**
+  - pattern：该闭环已有本地 OpenAI 兼容 mock 的后端测试，覆盖三项内置工具、SSE、outputs 和 JSONL 恢复，是无外部模型 Key 时的稳定验收路径。
+  - 陷阱：容器中的 agent-browser daemon 可能在一次成功导航后丢失浏览器进程；即使改用 `--no-sandbox`，也应保留自动化后端闭环测试作为验收依据。
 ---
