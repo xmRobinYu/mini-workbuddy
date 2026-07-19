@@ -200,3 +200,13 @@
   - pattern：闭环浏览器验收时，先从 `/api/conversations` 的网络请求取得新会话 ID，再将输出目标设为 `conversations/{id}/outputs/...`，可同时验证工具写入和 outputs 下载。
   - 有用的上下文：`agent-browser --session <name>` 在此环境可稳定完成独立会话的 SSE 交互；复用已有本地服务即可，无需重启开发服务器。
 ---
+
+## 2026-07-20 05:34 - US-011
+- 复核既有的真实闭环实现：聊天页由后端 `/api` 配置和 `POST /api/chat/send` SSE 驱动，工具调用、工具结果、最终回复及 outputs 下载均不依赖 mock-store。
+- 浏览器使用独立无沙箱会话完成主路径：本地 OpenAI 兼容 mock 触发 `write_file`，页面显示工具参数、完成结果、最终回复和 `browser-closed-loop.txt` 下载链接；刷新后仍由会话详情与 outputs API 恢复。
+- 更改的文件：`scripts/ralph/progress.txt`。
+- 验证：后端相关 pytest 子集 83 passed、`uv run mypy app` 通过；前端 `npm exec -- tsc -b --noEmit`、本 story 文件 ESLint 和 `npm run build` 通过。全仓 `npm run lint` 仍受 590 条既有 Prettier 报错阻断，且 `npm run typecheck` 未定义。
+- **未来迭代的学习：**
+  - 在受限容器中，为新 `agent-browser` session 首次启动传入 `--args "--no-sandbox"`；复用旧 session 可能保留不兼容的启动参数。
+  - 浏览器闭环验证结束后，应恢复临时模型配置并删除临时会话，避免污染共享 workspace。
+---
