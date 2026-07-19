@@ -135,3 +135,13 @@
   - pattern：Agent 表单不能把后端暂未提供管理 API 的 Skills 绑定重置为空，编辑时应保留其原有值。
   - 陷阱：浏览器 daemon 在本容器可能无响应，即使已有受控 Vite 服务；应保留 mock 闭环后端测试作为可复现的验收证据，并在可用环境补做 UI 操作验证。
 ---
+
+## 2026-07-19 17:09 - US-011
+- 复核 `a749517` 的闭环实现：聊天、Agent 与工具页均从真实 `/api` 接口恢复配置；聊天页用 POST SSE 渲染工具调用与结果，并通过 outputs 接口显示会话产物。
+- 更改的文件：`scripts/ralph/progress.txt`。
+- 验证：`uv run pytest`（147 passed）、`uv run mypy app`、`npx tsc -b --noEmit`、`npm run build`、改动文件 ESLint 与 Prettier、`git diff --check` 均通过。`npm run lint` 仍报告 590 条未改动文件的既有 Prettier 错误；本 story 文件不在失败列表。
+- 浏览器：以独立 `agent-browser` 会话打开 `http://127.0.0.1:5192` 和受控 `http://127.0.0.1:5199`，确认前端发出 `/api/conversations`、`/api/agents`、`/api/tools`、`/api/models` 请求并接收真实响应；容器会话随后被重置，未能完成最终点击式 SSE 交互。
+- **未来迭代的学习：**
+  - pattern：浏览器验证应使用命名 session，并在启动前传入 `--args "--no-sandbox"`；默认 session 可能被并行任务切换。
+  - 陷阱：全仓 ESLint 当前包含大量既有 Prettier 错误；将 lint 范围限定到本 story 文件，同时保留全仓失败输出作为基线证据。
+---
