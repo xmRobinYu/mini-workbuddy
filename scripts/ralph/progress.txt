@@ -17,6 +17,8 @@
 - When browser-testing header actions, inspect and dismiss persistent Sonner notifications first: they can intercept pointer clicks even when the intended button is enabled.
 - Rebuild chat UI state from persisted JSONL `role`/`type`/`data` records, and merge live SSE `tool_result` events by `tool_call_id`, so refresh and streaming show the same interaction history.
 - Agent configuration spans CRUD metadata and the separate `agent-md` endpoint; persist both when editing so model/tool bindings and the system prompt remain consistent.
+- For browser closed-loop checks, use a local OpenAI-compatible SSE mock and ask it to write under `conversations/{conversation_id}/outputs/`; this makes the persisted download visible after refresh.
+- 在此容器中启动 `agent-browser` 需要 `--args "--no-sandbox"`；若 daemon 已在运行，先执行 `agent-browser close` 才能使该参数生效。
 - Shared dev-server workspace state can be reset by test processes; browser verification should query `/api/models`, `/api/agents`, and `/api/tools` immediately before sending a message.
 
 ---
@@ -137,6 +139,17 @@
   - 陷阱：浏览器 daemon 在本容器可能无响应，即使已有受控 Vite 服务；应保留 mock 闭环后端测试作为可复现的验收证据，并在可用环境补做 UI 操作验证。
 ---
 
+## 2026-07-19 21:39 - US-011
+- 复核闭环集成提交：聊天页从后端恢复 Agent、会话、工具和 outputs，并通过 `POST /api/chat/send` 的 SSE 渲染工具调用及最终回复。
+- 浏览器验证使用本地 OpenAI 兼容 mock：新会话真实执行 `write_file` → `read_file` → `execute_command`，产物 `browser-closed-loop.txt` 由 outputs API 返回且显示下载入口；刷新后前端重新请求会话详情与 outputs 恢复记录。
+- 更改的文件：`scripts/ralph/progress.txt`。
+- 验证：后端 models/tools/agents/conversations/chat pytest 子集、`uv run mypy app`、前端 `npm run typecheck`、`npm run lint`、`npm run build` 与 `git diff --check` 全部通过。
+- **未来迭代的学习：**
+  - pattern：浏览器端 SSE 验收应使用没有历史 tool result 的新会话；Agent Loop 会将持久化历史一并传给模型，mock 的轮次判断也必须考虑这些历史记录。
+  - 陷阱：相关后端测试会重置 workspace 运行时配置；真实浏览器验收前先确认 Agent 的 `model_id` 能解析到模型，且三项内置工具均已启用。
+  - 有用的上下文：`GET /api/conversations/{id}` 可作为刷新恢复的可靠证据，`GET /api/conversations/{id}/outputs` 对应 UI 的下载入口。
+---
+
 ## 2026-07-19 21:22 - US-011
 - 复核已提交的真实闭环集成：聊天页通过 `/api/conversations`、`/api/agents` 和 `/api/tools` 恢复后端状态，outputs 区域渲染并可下载后端产物；SSE 解析仍由 `fetch` reader 驱动，而非 mock timeout 文本。
 - 后端闭环回归以本地 OpenAI 兼容流覆盖 `write_file → read_file → execute_command`、SSE 事件、outputs 下载与 JSONL 刷新恢复。
@@ -176,4 +189,14 @@
 - **未来迭代的学习：**
   - pattern：该闭环已有本地 OpenAI 兼容 mock 的后端测试，覆盖三项内置工具、SSE、outputs 和 JSONL 恢复，是无外部模型 Key 时的稳定验收路径。
   - 陷阱：容器中的 agent-browser daemon 可能在一次成功导航后丢失浏览器进程；即使改用 `--no-sandbox`，也应保留自动化后端闭环测试作为验收依据。
+---
+
+## 2026-07-19 18:00 - US-011
+- 复核并完成真实主路径验收：使用本地 OpenAI 兼容 SSE mock，通过浏览器创建会话、发送消息，真实后端依次执行 `write_file`、`read_file`、`execute_command`，页面显示思考、工具参数、工具结果、最终回复和 outputs 下载链接。
+- 刷新后，页面通过 `/api/conversations/{id}` 与 `/api/conversations/{id}/outputs` 恢复同一会话、工具结果及 `browser-closed-loop.txt`，未依赖 mock-store 种子。
+- 更改的文件：`scripts/ralph/progress.txt`。
+- 验证：`backend` 的 `uv run pytest`（147 passed）与 `uv run mypy app`，`frontend` 的 `npm run typecheck`、`npm run lint`、`npm run build` 全部通过；`agent-browser` 在既有 `5192` 前端、`8000` 后端和 `18080` mock 服务上完成主路径与刷新恢复验收。
+- **未来迭代的学习：**
+  - pattern：闭环浏览器验收时，先从 `/api/conversations` 的网络请求取得新会话 ID，再将输出目标设为 `conversations/{id}/outputs/...`，可同时验证工具写入和 outputs 下载。
+  - 有用的上下文：`agent-browser --session <name>` 在此环境可稳定完成独立会话的 SSE 交互；复用已有本地服务即可，无需重启开发服务器。
 ---
