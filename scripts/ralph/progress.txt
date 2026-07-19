@@ -17,6 +17,7 @@
 - When browser-testing header actions, inspect and dismiss persistent Sonner notifications first: they can intercept pointer clicks even when the intended button is enabled.
 - Rebuild chat UI state from persisted JSONL `role`/`type`/`data` records, and merge live SSE `tool_result` events by `tool_call_id`, so refresh and streaming show the same interaction history.
 - Agent configuration spans CRUD metadata and the separate `agent-md` endpoint; persist both when editing so model/tool bindings and the system prompt remain consistent.
+- Shared dev-server workspace state can be reset by test processes; browser verification should query `/api/models`, `/api/agents`, and `/api/tools` immediately before sending a message.
 
 ---
 
@@ -134,6 +135,17 @@
   - pattern：聊天 API facade 需要用 fetch reader 解析 POST SSE；`EventSource` 不支持本接口所需的 POST body。
   - pattern：Agent 表单不能把后端暂未提供管理 API 的 Skills 绑定重置为空，编辑时应保留其原有值。
   - 陷阱：浏览器 daemon 在本容器可能无响应，即使已有受控 Vite 服务；应保留 mock 闭环后端测试作为可复现的验收证据，并在可用环境补做 UI 操作验证。
+---
+
+## 2026-07-19 21:22 - US-011
+- 复核已提交的真实闭环集成：聊天页通过 `/api/conversations`、`/api/agents` 和 `/api/tools` 恢复后端状态，outputs 区域渲染并可下载后端产物；SSE 解析仍由 `fetch` reader 驱动，而非 mock timeout 文本。
+- 后端闭环回归以本地 OpenAI 兼容流覆盖 `write_file → read_file → execute_command`、SSE 事件、outputs 下载与 JSONL 刷新恢复。
+- 更改的文件：`scripts/ralph/progress.txt`。
+- 验证：`uv run pytest tests/test_models_api.py tests/test_tools_api.py tests/test_agents_api.py tests/test_conversations_api.py tests/test_conversations_store.py tests/test_chat_send_api.py`（83 passed）；`uv run mypy app`；`npm exec -- tsc -b --noEmit`；本 story 文件 ESLint；`npm run build` 均通过。全仓 `npm run lint` 仍受 615 个既有 Prettier 报错影响。
+- 浏览器验证：使用 `agent-browser` 复用 `http://127.0.0.1:5192`，确认 `/api` 请求和后端持久化 outputs 渲染；测试期间共享 workspace 被并行测试重置，故未将临时模型配置作为持久化结果保留。
+- **未来迭代的学习：**
+  - 在共享开发服务中，浏览器发信前需重新读取模型、Agent 与工具开关；测试 fixture 可能重置这些运行时文件。
+  - 以本地 OpenAI 兼容 mock 驱动时，前端 `fetch` SSE 与后端工具闭环可分别形成可重复验证证据。
 ---
 
 ## 2026-07-19 17:18 - US-011
