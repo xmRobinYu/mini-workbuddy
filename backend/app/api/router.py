@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from app.api.agents import router as agents_router
 from app.api.chat import router as chat_router
 from app.api.conversations import router as conversations_router
+from app.api.logs import router as logs_router
 from app.api.memory import router as memory_router
 from app.api.models import router as models_router
 from app.api.skills import router as skills_router
@@ -23,6 +24,7 @@ api_router.include_router(skills_router)
 api_router.include_router(conversations_router)
 api_router.include_router(chat_router)
 api_router.include_router(memory_router)
+api_router.include_router(logs_router)
 
 
 @api_router.get("/ping", tags=["system"])

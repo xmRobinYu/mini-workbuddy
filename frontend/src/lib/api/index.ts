@@ -34,3 +34,12 @@ export {
   type ShortTermMemoryViewModel,
   type MemoryStatsViewModel,
 } from "./memory";
+export {
+  logsApi,
+  type LogRow,
+  type LogType,
+  type LogLevel,
+  type LogStatus,
+  type LogsResult,
+  type LogsQuery,
+} from "./logs";

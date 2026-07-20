@@ -209,6 +209,41 @@ export interface MemoryStatsRead {
   archived_items: number;
 }
 
+// ── Logs (backend/app/schemas/log.py) ───────────────────────────────────────
+
+/** GET /api/logs query params. */
+export interface LogsQuery {
+  type?: "model" | "tool" | "agent" | "skill" | "all";
+  q?: string;
+  level?: "info" | "warn" | "error" | "all";
+  status?: "ok" | "error" | "all";
+  limit?: number;
+}
+
+/** A single log row projected from conversation JSONL. */
+export interface LogRead {
+  id: string;
+  conversation_id: string;
+  conversation_title: string;
+  time: string;
+  type: "model" | "tool" | "agent" | "skill";
+  event: string;
+  agent: string;
+  level: "info" | "warn" | "error";
+  status: "ok" | "error";
+  latency: string;
+  detail: string;
+  input: unknown;
+  output: unknown;
+}
+
+/** GET /api/logs response body. */
+export interface LogList {
+  items: LogRead[];
+  total: number;
+  limit: number;
+}
+
 // ── Generic envelope ────────────────────────────────────────────────────────
 
 /** FastAPI error body for non-2xx responses. */

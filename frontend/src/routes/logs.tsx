@@ -1,21 +1,53 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import JSZip from "jszip";
-import { RefreshCw, Terminal, Cpu, Bot, Sparkles, AlertCircle, CheckCircle2, X, ArrowRight, Clock, ChevronRight, ListTree, Minimize2, Search, Copy, Download, Package } from "lucide-react";
+import {
+  RefreshCw,
+  Terminal,
+  Cpu,
+  Bot,
+  Sparkles,
+  AlertCircle,
+  CheckCircle2,
+  X,
+  ArrowRight,
+  Clock,
+  ChevronRight,
+  ListTree,
+  Minimize2,
+  Search,
+  Copy,
+  Download,
+  Package,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/page-header";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { logsApi, type LogStatus, type LogType, type LogRow as LogRowWire } from "@/lib/api";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import {
-  Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
 } from "@/components/ui/sheet";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
 } from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/logs")({
@@ -26,127 +58,20 @@ type LogLevel = "info" | "warn" | "error";
 type TraceStep = {
   id?: string;
   name: string;
-  type: LogRow["type"];
+  type: LogType;
   duration: string;
   status: "ok" | "error";
   note?: string;
   children?: TraceStep[];
 };
-type LogRow = {
-  id: string;
-  time: string;
-  type: "tool" | "model" | "agent" | "skill";
-  event: string;
-  agent: string;
-  status: "ok" | "error";
-  level: LogLevel;
-  latency: string;
-  detail: string;
-  input?: unknown;
-  output?: unknown;
+/**
+ * LogRow the page renders. Mirrors the backend-projected row (see `logsApi`),
+ * augmented with an optional UI-only `trace` tree the projected API does not
+ * populate today (kept so the existing trace UI keeps type-checking).
+ */
+type LogRow = LogRowWire & {
   trace?: TraceStep[];
 };
-
-const today = new Date();
-const yyyy = today.getFullYear();
-const mm = String(today.getMonth() + 1).padStart(2, "0");
-const dd = String(today.getDate()).padStart(2, "0");
-const dstr = `${yyyy}-${mm}-${dd}`;
-
-const rows: LogRow[] = [
-  {
-    id: "1", time: `${dstr} 14:32:08`, type: "model", event: "chat.completion", agent: "主 Agent",
-    status: "ok", level: "info", latency: "1.24s", detail: "DeepSeek Chat · 1832 in / 421 out",
-    input: { model: "deepseek-chat", temperature: 0.3, messages: [{ role: "user", content: "帮我优化这段组件代码" }] },
-    output: { role: "assistant", content: "已提取重复逻辑到 useLogs hook，见下方 diff……", tokens: { in: 1832, out: 421 } },
-    trace: [
-      { name: "resolve.model", type: "model", duration: "6ms", status: "ok", note: "命中 deepseek-chat" },
-      {
-        name: "http.request", type: "model", duration: "1.18s", status: "ok", note: "POST /v1/chat/completions",
-        children: [
-          { name: "dns.lookup", type: "model", duration: "12ms", status: "ok", note: "api.deepseek.com" },
-          { name: "tls.handshake", type: "model", duration: "84ms", status: "ok" },
-          {
-            name: "stream.read", type: "model", duration: "1.07s", status: "ok",
-            children: [
-              { name: "chunk[0..7]", type: "model", duration: "220ms", status: "ok", note: "首 token 到达" },
-              { name: "chunk[8..42]", type: "model", duration: "852ms", status: "ok", note: "42 段 SSE 事件" },
-            ],
-          },
-        ],
-      },
-      { name: "usage.record", type: "model", duration: "3ms", status: "ok" },
-    ],
-  },
-  {
-    id: "2", time: `${dstr} 14:32:07`, type: "tool", event: "execute_command", agent: "主 Agent",
-    status: "ok", level: "info", latency: "820ms", detail: "$ bun run build",
-    input: { command: "bun run build", cwd: "/dev-server", timeout: 60 },
-    output: { exitCode: 0, stdout: "vite v7.0.0 building for production...\n✓ built in 812ms", stderr: "" },
-    trace: [
-      { name: "sandbox.spawn", type: "tool", duration: "18ms", status: "ok" },
-      { name: "process.exec", type: "tool", duration: "798ms", status: "ok", note: "exit 0" },
-    ],
-  },
-  {
-    id: "3", time: `${dstr} 14:32:05`, type: "tool", event: "write_file", agent: "主 Agent",
-    status: "ok", level: "info", latency: "12ms", detail: "src/styles.css (12.4kb)",
-    input: { path: "src/styles.css", bytes: 12400 },
-    output: { ok: true, path: "src/styles.css" },
-  },
-  {
-    id: "4", time: `${dstr} 14:32:04`, type: "skill", event: "ui-design-system", agent: "主 Agent",
-    status: "ok", level: "info", latency: "342ms", detail: "生成 8 条 token 建议",
-    input: { skill: "ui-design-system", context: "logs page" },
-    output: { suggestions: 8, applied: 5 },
-  },
-  {
-    id: "5", time: `${dstr} 14:32:02`, type: "tool", event: "read_file", agent: "主 Agent",
-    status: "ok", level: "info", latency: "8ms", detail: "src/routes/index.tsx",
-    input: { path: "src/routes/index.tsx" },
-    output: { bytes: 4210, lines: 128 },
-  },
-  {
-    id: "6", time: `${dstr} 13:31:58`, type: "model", event: "chat.completion", agent: "主 Agent",
-    status: "ok", level: "warn", latency: "2.14s", detail: "DeepSeek Chat · 输出接近 token 上限",
-    input: { model: "deepseek-chat", max_tokens: 800 },
-    output: { finish_reason: "length", tokens: { in: 1420, out: 612 } },
-  },
-  {
-    id: "7", time: `${dstr} 11:30:12`, type: "agent", event: "delegate_task", agent: "主 Agent → 文档助手",
-    status: "ok", level: "info", latency: "3.42s", detail: "整理会议纪要 · 已返回 2.1kb 内容",
-    input: { target: "文档助手", task: "整理今日会议纪要为 Markdown" },
-    output: { bytes: 2100, sections: 4 },
-    trace: [
-      { name: "route.delegate", type: "agent", duration: "12ms", status: "ok", note: "→ 文档助手" },
-      {
-        name: "child.chat.completion", type: "model", duration: "3.28s", status: "ok",
-        children: [
-          { name: "child.resolve.model", type: "model", duration: "5ms", status: "ok" },
-          { name: "child.http.request", type: "model", duration: "3.20s", status: "ok" },
-          { name: "child.usage.record", type: "model", duration: "4ms", status: "ok" },
-        ],
-      },
-      { name: "response.collect", type: "agent", duration: "128ms", status: "ok" },
-    ],
-  },
-  {
-    id: "8", time: `${dstr} 10:29:45`, type: "tool", event: "execute_command", agent: "代码助手",
-    status: "error", level: "error", latency: "30.0s", detail: "命令超时：git log --all",
-    input: { command: "git log --all", timeout: 30 },
-    output: { error: "TimeoutError", message: "Command exceeded 30s and was killed." },
-    trace: [
-      { name: "sandbox.spawn", type: "tool", duration: "22ms", status: "ok" },
-      { name: "process.exec", type: "tool", duration: "30.0s", status: "error", note: "SIGKILL after timeout" },
-    ],
-  },
-  {
-    id: "9", time: `${dstr} 09:28:11`, type: "model", event: "chat.completion", agent: "代码助手",
-    status: "ok", level: "info", latency: "1.87s", detail: "DeepSeek Coder · 2201 in / 890 out",
-    input: { model: "deepseek-coder", temperature: 0.2 },
-    output: { tokens: { in: 2201, out: 890 } },
-  },
-];
 
 const iconMap = { tool: Terminal, model: Cpu, agent: Bot, skill: Sparkles };
 const colorMap = {
@@ -184,17 +109,28 @@ function parseTs(t: string) {
 
 function rangeMs(v: string): number | null {
   switch (v) {
-    case "15m": return 15 * 60 * 1000;
-    case "1h": return 60 * 60 * 1000;
-    case "6h": return 6 * 60 * 60 * 1000;
-    case "24h": return 24 * 60 * 60 * 1000;
-    case "7d": return 7 * 24 * 60 * 60 * 1000;
-    default: return null;
+    case "15m":
+      return 15 * 60 * 1000;
+    case "1h":
+      return 60 * 60 * 1000;
+    case "6h":
+      return 6 * 60 * 60 * 1000;
+    case "24h":
+      return 24 * 60 * 60 * 1000;
+    case "7d":
+      return 7 * 24 * 60 * 60 * 1000;
+    default:
+      return null;
   }
 }
 
 function safeSlug(s: string): string {
-  return s.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "log";
+  return (
+    s
+      .replace(/[^A-Za-z0-9._-]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 60) || "log"
+  );
 }
 
 async function exportLogsZip(logs: LogRow[]) {
@@ -212,7 +148,7 @@ async function exportLogsZip(logs: LogRow[]) {
     let errCount = 0;
 
     for (const r of logs) {
-      let base = `${r.id}-${safeSlug(r.event)}`;
+      const base = `${r.id}-${safeSlug(r.event)}`;
       let name = base;
       let i = 2;
       while (seen.has(name)) name = `${base}-${i++}`;
@@ -223,10 +159,24 @@ async function exportLogsZip(logs: LogRow[]) {
       const hasOutput = r.output !== undefined && r.output !== null;
       if (hasInput) dir.file("input.json", JSON.stringify(r.input, null, 2));
       if (hasOutput) dir.file("output.json", JSON.stringify(r.output, null, 2));
-      dir.file("meta.json", JSON.stringify({
-        id: r.id, time: r.time, type: r.type, event: r.event, agent: r.agent,
-        status: r.status, level: r.level, latency: r.latency, detail: r.detail,
-      }, null, 2));
+      dir.file(
+        "meta.json",
+        JSON.stringify(
+          {
+            id: r.id,
+            time: r.time,
+            type: r.type,
+            event: r.event,
+            agent: r.agent,
+            status: r.status,
+            level: r.level,
+            latency: r.latency,
+            detail: r.detail,
+          },
+          null,
+          2,
+        ),
+      );
 
       const issues: string[] = [];
       if (!hasInput) issues.push("缺少 input");
@@ -256,12 +206,19 @@ async function exportLogsZip(logs: LogRow[]) {
     }
 
     const exportedAt = new Date().toISOString();
-    zip.file("validation-report.json", JSON.stringify({
-      exportedAt,
-      total: logs.length,
-      summary: { ok: okCount, warn: warnCount, error: errCount },
-      entries: report,
-    }, null, 2));
+    zip.file(
+      "validation-report.json",
+      JSON.stringify(
+        {
+          exportedAt,
+          total: logs.length,
+          summary: { ok: okCount, warn: warnCount, error: errCount },
+          entries: report,
+        },
+        null,
+        2,
+      ),
+    );
 
     const md = [
       `# 日志导出校验报告`,
@@ -272,7 +229,10 @@ async function exportLogsZip(logs: LogRow[]) {
       ``,
       `| 文件夹 | 事件 | 类型 | 状态 | 级别 | 校验 | 说明 |`,
       `| --- | --- | --- | --- | --- | --- | --- |`,
-      ...report.map((e) => `| ${e.folder} | ${e.event} | ${e.type} | ${e.status} | ${e.level} | ${e.validation} | ${(e.issues as string[]).join("；") || "-"} |`),
+      ...report.map(
+        (e) =>
+          `| ${e.folder} | ${e.event} | ${e.type} | ${e.status} | ${e.level} | ${e.validation} | ${(e.issues as string[]).join("；") || "-"} |`,
+      ),
     ].join("\n");
     zip.file("validation-report.md", md);
 
@@ -293,12 +253,38 @@ async function exportLogsZip(logs: LogRow[]) {
   }
 }
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "未知错误";
+}
 
 function LogsPage() {
   const [range, setRange] = useState("all");
   const [level, setLevel] = useState<string>("all");
   const [status, setStatus] = useState<string>("all");
   const [active, setActive] = useState<LogRow | null>(null);
+
+  // Backend-projected logs (GET /api/logs). Loaded once and on manual refresh;
+  // the on-page filters below are applied client-side on top of the projection.
+  const [rows, setRows] = useState<LogRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const result = await logsApi.list({});
+      setRows(result.items as LogRow[]);
+    } catch (error) {
+      toast.error("加载日志失败", { description: errorMessage(error) });
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   const filtered = useMemo(() => {
     const ms = rangeMs(range);
@@ -309,7 +295,7 @@ function LogsPage() {
       if (status !== "all" && r.status !== status) return false;
       return true;
     });
-  }, [range, level, status]);
+  }, [rows, range, level, status]);
 
   const canReset = range !== "all" || level !== "all" || status !== "all";
 
@@ -320,11 +306,23 @@ function LogsPage() {
         subtitle="Agent 执行、模型调用、工具与技能的结构化日志。点击任意行查看执行详情。"
         action={
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => exportLogsZip(filtered)} disabled={filtered.length === 0}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => exportLogsZip(filtered)}
+              disabled={filtered.length === 0}
+            >
               <Package className="h-3.5 w-3.5" /> 导出当前日志
             </Button>
-            <Button variant="outline" size="sm" className="gap-1.5">
-              <RefreshCw className="h-3.5 w-3.5" /> 刷新
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => void load()}
+              disabled={refreshing}
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} /> 刷新
             </Button>
           </div>
         }
@@ -340,12 +338,18 @@ function LogsPage() {
             variant="ghost"
             size="sm"
             className="h-8 gap-1 text-xs"
-            onClick={() => { setRange("all"); setLevel("all"); setStatus("all"); }}
+            onClick={() => {
+              setRange("all");
+              setLevel("all");
+              setStatus("all");
+            }}
           >
             <X className="h-3 w-3" /> 重置
           </Button>
         )}
-        <span className="ml-auto text-xs text-muted-foreground">共 {filtered.length} 条</span>
+        <span className="ml-auto text-xs text-muted-foreground">
+          {loading ? "加载中…" : `共 ${filtered.length} 条`}
+        </span>
       </div>
 
       <Tabs defaultValue="all" className="mt-4">
@@ -358,19 +362,39 @@ function LogsPage() {
         </TabsList>
 
         <TabsContent value="all" className="mt-4">
-          <LogTable data={filtered} onSelect={setActive} />
+          <LogTable data={filtered} onSelect={setActive} loading={loading} />
         </TabsContent>
         <TabsContent value="model" className="mt-4">
-          <LogTable data={filtered.filter((r) => r.type === "model")} onSelect={setActive} emptyText="暂无模型调用日志" />
+          <LogTable
+            data={filtered.filter((r) => r.type === "model")}
+            onSelect={setActive}
+            emptyText="暂无模型调用日志"
+            loading={loading}
+          />
         </TabsContent>
         <TabsContent value="tool" className="mt-4">
-          <LogTable data={filtered.filter((r) => r.type === "tool")} onSelect={setActive} emptyText="暂无工具执行日志" />
+          <LogTable
+            data={filtered.filter((r) => r.type === "tool")}
+            onSelect={setActive}
+            emptyText="暂无工具执行日志"
+            loading={loading}
+          />
         </TabsContent>
         <TabsContent value="agent" className="mt-4">
-          <LogTable data={filtered.filter((r) => r.type === "agent")} onSelect={setActive} emptyText="暂无 Agent 编排日志" />
+          <LogTable
+            data={filtered.filter((r) => r.type === "agent")}
+            onSelect={setActive}
+            emptyText="暂无 Agent 编排日志"
+            loading={loading}
+          />
         </TabsContent>
         <TabsContent value="error" className="mt-4">
-          <LogTable data={filtered.filter((r) => r.status === "error")} onSelect={setActive} emptyText="暂无错误日志" />
+          <LogTable
+            data={filtered.filter((r) => r.status === "error")}
+            onSelect={setActive}
+            emptyText="暂无错误日志"
+            loading={loading}
+          />
         </TabsContent>
       </Tabs>
 
@@ -380,7 +404,10 @@ function LogsPage() {
 }
 
 function FilterSelect({
-  value, onChange, options, width,
+  value,
+  onChange,
+  options,
+  width,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -394,7 +421,9 @@ function FilterSelect({
       </SelectTrigger>
       <SelectContent>
         {options.map((o) => (
-          <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>
+          <SelectItem key={o.value} value={o.value} className="text-xs">
+            {o.label}
+          </SelectItem>
         ))}
       </SelectContent>
     </Select>
@@ -408,11 +437,15 @@ const levelStyles: Record<LogLevel, string> = {
 };
 
 function LogTable({
-  data, onSelect, emptyText = "暂无日志",
+  data,
+  onSelect,
+  emptyText = "暂无日志",
+  loading = false,
 }: {
   data: LogRow[];
   onSelect: (r: LogRow) => void;
   emptyText?: string;
+  loading?: boolean;
 }) {
   return (
     <div className="card-warm overflow-hidden">
@@ -424,7 +457,9 @@ function LogTable({
         <div>耗时</div>
         <div>状态</div>
       </div>
-      {data.length === 0 ? (
+      {loading ? (
+        <div className="px-4 py-12 text-center text-sm text-muted-foreground">加载中…</div>
+      ) : data.length === 0 ? (
         <div className="px-4 py-12 text-center text-sm text-muted-foreground">{emptyText}</div>
       ) : (
         data.map((r) => {
@@ -437,15 +472,24 @@ function LogTable({
               onClick={() => onSelect(r)}
               className="grid w-full grid-cols-[110px_1fr_140px_70px_100px_80px] items-center gap-3 border-b border-border/50 px-4 py-2.5 text-left text-sm last:border-b-0 hover:bg-accent/30 focus:outline-none focus:bg-accent/40"
             >
-              <span className="font-mono text-[11px] text-muted-foreground" title={r.time}>{timeShort}</span>
+              <span className="font-mono text-[11px] text-muted-foreground" title={r.time}>
+                {timeShort}
+              </span>
               <div className="flex items-center gap-2.5 min-w-0">
-                <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${colorMap[r.type]}`}>
+                <div
+                  className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${colorMap[r.type]}`}
+                >
                   <Icon className="h-3.5 w-3.5" />
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
-                    <span className="font-mono text-[12px] font-medium text-foreground">{r.event}</span>
-                    <Badge variant="outline" className="h-4 border-border text-[9px] font-normal uppercase">
+                    <span className="font-mono text-[12px] font-medium text-foreground">
+                      {r.event}
+                    </span>
+                    <Badge
+                      variant="outline"
+                      className="h-4 border-border text-[9px] font-normal uppercase"
+                    >
                       {r.type}
                     </Badge>
                   </div>
@@ -453,7 +497,10 @@ function LogTable({
                 </div>
               </div>
               <span className="truncate text-[12px] text-muted-foreground">{r.agent}</span>
-              <Badge variant="outline" className={`h-5 text-[10px] uppercase ${levelStyles[r.level]}`}>
+              <Badge
+                variant="outline"
+                className={`h-5 text-[10px] uppercase ${levelStyles[r.level]}`}
+              >
                 {r.level}
               </Badge>
               <span className="font-mono text-[11px] text-muted-foreground">{r.latency}</span>
@@ -484,8 +531,13 @@ function LogDetailDrawer({ row, onClose }: { row: LogRow | null; onClose: () => 
           <>
             <SheetHeader className="space-y-2">
               <div className="flex items-center gap-2">
-                <Badge variant="outline" className="h-5 text-[10px] uppercase">{row.type}</Badge>
-                <Badge variant="outline" className={`h-5 text-[10px] uppercase ${levelStyles[row.level]}`}>
+                <Badge variant="outline" className="h-5 text-[10px] uppercase">
+                  {row.type}
+                </Badge>
+                <Badge
+                  variant="outline"
+                  className={`h-5 text-[10px] uppercase ${levelStyles[row.level]}`}
+                >
                   {row.level}
                 </Badge>
                 {row.status === "ok" ? (
@@ -505,17 +557,31 @@ function LogDetailDrawer({ row, onClose }: { row: LogRow | null; onClose: () => 
             <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
               <MetaCell label="时间" value={row.time} mono />
               <MetaCell label="Agent" value={row.agent} />
-              <MetaCell label="耗时" value={row.latency} mono icon={<Clock className="h-3 w-3" />} />
+              <MetaCell
+                label="耗时"
+                value={row.latency}
+                mono
+                icon={<Clock className="h-3 w-3" />}
+              />
             </div>
 
             <TraceSection trace={row.trace} rowId={row.id} />
 
-
-            <Section title="输入" copyValue={row.input} copyLabel="输入" downloadName={`${row.id}-input.json`}>
+            <Section
+              title="输入"
+              copyValue={row.input}
+              copyLabel="输入"
+              downloadName={`${row.id}-input.json`}
+            >
               <JsonBlock value={row.input} />
             </Section>
 
-            <Section title="输出" copyValue={row.output} copyLabel="输出" downloadName={`${row.id}-output.json`}>
+            <Section
+              title="输出"
+              copyValue={row.output}
+              copyLabel="输出"
+              downloadName={`${row.id}-output.json`}
+            >
               <JsonBlock value={row.output} />
             </Section>
           </>
@@ -526,12 +592,22 @@ function LogDetailDrawer({ row, onClose }: { row: LogRow | null; onClose: () => 
 }
 
 function MetaCell({
-  label, value, mono, icon,
-}: { label: string; value: string; mono?: boolean; icon?: React.ReactNode }) {
+  label,
+  value,
+  mono,
+  icon,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  icon?: React.ReactNode;
+}) {
   return (
     <div className="rounded-lg border border-border bg-surface-elevated p-2">
       <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
-      <div className={`mt-1 flex items-center gap-1 text-[12px] text-foreground ${mono ? "font-mono" : ""}`}>
+      <div
+        className={`mt-1 flex items-center gap-1 text-[12px] text-foreground ${mono ? "font-mono" : ""}`}
+      >
         {icon}
         <span className="truncate">{value}</span>
       </div>
@@ -540,7 +616,11 @@ function MetaCell({
 }
 
 function Section({
-  title, children, copyValue, copyLabel, downloadName,
+  title,
+  children,
+  copyValue,
+  copyLabel,
+  downloadName,
 }: {
   title: string;
   children: React.ReactNode;
@@ -552,7 +632,9 @@ function Section({
   const canCopy = copyValue !== undefined && copyValue !== null;
   const canDownload = canCopy && !!downloadName;
   function serialize() {
-    return typeof copyValue === "string" ? (copyValue as string) : JSON.stringify(copyValue, null, 2);
+    return typeof copyValue === "string"
+      ? (copyValue as string)
+      : JSON.stringify(copyValue, null, 2);
   }
   async function handleCopy() {
     try {
@@ -582,7 +664,9 @@ function Section({
   return (
     <div className="mt-5">
       <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{title}</h3>
+        <h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          {title}
+        </h3>
         <div className="flex items-center gap-1">
           {canDownload && (
             <Button
@@ -631,26 +715,39 @@ type PathCheck = { ok: boolean; level: "ok" | "warn" | "error"; message: string 
 function validateFilename(name: string): PathCheck[] {
   const checks: PathCheck[] = [];
   const hasTraversal = name.includes("/") || name.includes("\\") || name.includes("..");
-  checks.push(hasTraversal
-    ? { ok: false, level: "error", message: "文件名不得包含路径分隔符或 .. 片段" }
-    : { ok: true, level: "ok", message: "文件名不含路径分隔符" });
+  checks.push(
+    hasTraversal
+      ? { ok: false, level: "error", message: "文件名不得包含路径分隔符或 .. 片段" }
+      : { ok: true, level: "ok", message: "文件名不含路径分隔符" },
+  );
   const validChars = /^[A-Za-z0-9._-]+$/.test(name);
-  checks.push(validChars
-    ? { ok: true, level: "ok", message: "字符集合法（字母/数字/._-）" }
-    : { ok: false, level: "warn", message: "建议仅使用字母、数字、点、下划线与短横线" });
+  checks.push(
+    validChars
+      ? { ok: true, level: "ok", message: "字符集合法（字母/数字/._-）" }
+      : { ok: false, level: "warn", message: "建议仅使用字母、数字、点、下划线与短横线" },
+  );
   const endsJson = name.toLowerCase().endsWith(".json");
-  checks.push(endsJson
-    ? { ok: true, level: "ok", message: "扩展名为 .json" }
-    : { ok: false, level: "error", message: "文件必须以 .json 结尾" });
+  checks.push(
+    endsJson
+      ? { ok: true, level: "ok", message: "扩展名为 .json" }
+      : { ok: false, level: "error", message: "文件必须以 .json 结尾" },
+  );
   const lenOk = name.length > 0 && name.length <= 120;
-  checks.push(lenOk
-    ? { ok: true, level: "ok", message: `文件名长度合法（${name.length}/120）` }
-    : { ok: false, level: "error", message: "文件名长度需在 1–120 之间" });
+  checks.push(
+    lenOk
+      ? { ok: true, level: "ok", message: `文件名长度合法（${name.length}/120）` }
+      : { ok: false, level: "error", message: "文件名长度需在 1–120 之间" },
+  );
   return checks;
 }
 
 function DownloadPreviewDialog({
-  open, onOpenChange, label, filename, rawValue, onConfirm,
+  open,
+  onOpenChange,
+  label,
+  filename,
+  rawValue,
+  onConfirm,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -667,8 +764,19 @@ function DownloadPreviewDialog({
     if (typeof rawValue === "string") return rawValue as string;
     return format === "pretty" ? JSON.stringify(rawValue, null, 2) : JSON.stringify(rawValue);
   }, [rawValue, format]);
-  const prettySize = useMemo(() => new Blob([typeof rawValue === "string" ? (rawValue as string) : JSON.stringify(rawValue, null, 2)]).size, [rawValue, revalidateNonce]);
-  const minSize = useMemo(() => new Blob([typeof rawValue === "string" ? (rawValue as string) : JSON.stringify(rawValue)]).size, [rawValue, revalidateNonce]);
+  const prettySize = useMemo(
+    () =>
+      new Blob([
+        typeof rawValue === "string" ? (rawValue as string) : JSON.stringify(rawValue, null, 2),
+      ]).size,
+    [rawValue, revalidateNonce],
+  );
+  const minSize = useMemo(
+    () =>
+      new Blob([typeof rawValue === "string" ? (rawValue as string) : JSON.stringify(rawValue)])
+        .size,
+    [rawValue, revalidateNonce],
+  );
   const size = useMemo(() => new Blob([content]).size, [content, revalidateNonce]);
   const savedPct = prettySize > 0 ? Math.max(0, Math.round((1 - minSize / prettySize) * 100)) : 0;
   const checks = useMemo(() => validateFilename(filename), [filename, revalidateNonce]);
@@ -714,14 +822,18 @@ function DownloadPreviewDialog({
             </div>
           </div>
           <div className="col-span-2 rounded-lg border border-border bg-surface-elevated p-2">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">保存路径</div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              保存路径
+            </div>
             <div className="mt-1 truncate font-mono text-[12px] text-foreground">{savePath}</div>
           </div>
         </div>
 
         {!isString && (
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">格式</span>
+            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              格式
+            </span>
             <div className="inline-flex rounded-md border border-border bg-surface-elevated p-0.5">
               <button
                 type="button"
@@ -746,7 +858,9 @@ function DownloadPreviewDialog({
 
         <div className="mt-1">
           <div className="mb-1.5 flex items-center gap-2">
-            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">路径校验</span>
+            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              路径校验
+            </span>
             <span className="text-[10px] text-muted-foreground">
               上次校验 {new Date(lastValidatedAt).toLocaleTimeString()}
             </span>
@@ -772,7 +886,15 @@ function DownloadPreviewDialog({
                 ) : (
                   <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
                 )}
-                <span className={c.level === "error" ? "text-destructive" : c.level === "warn" ? "text-warning" : "text-muted-foreground"}>
+                <span
+                  className={
+                    c.level === "error"
+                      ? "text-destructive"
+                      : c.level === "warn"
+                        ? "text-warning"
+                        : "text-muted-foreground"
+                  }
+                >
                   {c.message}
                 </span>
               </li>
@@ -781,15 +903,23 @@ function DownloadPreviewDialog({
         </div>
 
         <div>
-          <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">内容预览</div>
+          <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            内容预览
+          </div>
           <pre className="max-h-56 overflow-auto rounded-lg border border-border bg-surface-elevated p-3 font-mono text-[11px] leading-relaxed text-foreground whitespace-pre-wrap break-all">
             {content.length > 4000 ? content.slice(0, 4000) + "\n… (已截断预览)" : content}
           </pre>
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
-          <Button onClick={() => onConfirm(content)} disabled={blocked || revalidating} className="gap-1.5">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            取消
+          </Button>
+          <Button
+            onClick={() => onConfirm(content)}
+            disabled={blocked || revalidating}
+            className="gap-1.5"
+          >
             <Download className="h-3.5 w-3.5" />
             {revalidating ? "校验中…" : blocked ? "校验未通过" : "确认下载"}
           </Button>
@@ -938,7 +1068,9 @@ function TraceSection({ trace, rowId }: { trace?: TraceStep[]; rowId: string }) 
   return (
     <div className="mt-5">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">调用链</h3>
+        <h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          调用链
+        </h3>
         {has && anyChildren && (
           <Button
             variant="ghost"
@@ -947,9 +1079,13 @@ function TraceSection({ trace, rowId }: { trace?: TraceStep[]; rowId: string }) 
             onClick={() => setExpanded(allOpen ? new Set() : new Set(allPaths))}
           >
             {allOpen ? (
-              <><Minimize2 className="h-3 w-3" /> 全部折叠</>
+              <>
+                <Minimize2 className="h-3 w-3" /> 全部折叠
+              </>
             ) : (
-              <><ListTree className="h-3 w-3" /> 展开全部</>
+              <>
+                <ListTree className="h-3 w-3" /> 展开全部
+              </>
             )}
           </Button>
         )}
@@ -1017,7 +1153,14 @@ function Highlight({ text, query }: { text: string; query: string }) {
 }
 
 function TraceNode({
-  step, path, depth, expanded, onToggle, query, matched, totalMs,
+  step,
+  path,
+  depth,
+  expanded,
+  onToggle,
+  query,
+  matched,
+  totalMs,
 }: {
   step: TraceStep;
   path: string;
@@ -1061,7 +1204,9 @@ function TraceNode({
             className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${isOpen ? "rotate-90" : ""}`}
           />
         </button>
-        <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${colorMap[step.type]}`}>
+        <div
+          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${colorMap[step.type]}`}
+        >
           <Icon className="h-3 w-3" />
         </div>
         <div className="min-w-0 flex-1">
@@ -1070,31 +1215,49 @@ function TraceNode({
               <Highlight text={step.name} query={query} />
             </span>
             <ArrowRight className="h-3 w-3 text-muted-foreground" />
-            <span className={`font-mono text-[11px] ${heat === "cool" ? "text-muted-foreground" : `${heatText[heat]} font-semibold`}`}>
+            <span
+              className={`font-mono text-[11px] ${heat === "cool" ? "text-muted-foreground" : `${heatText[heat]} font-semibold`}`}
+            >
               {step.duration}
             </span>
             {heat === "hot" && (
-              <Badge variant="outline" className="h-4 border-destructive/40 text-[9px] uppercase text-destructive">
+              <Badge
+                variant="outline"
+                className="h-4 border-destructive/40 text-[9px] uppercase text-destructive"
+              >
                 热点
               </Badge>
             )}
             {step.status === "error" && (
-              <Badge variant="outline" className="h-4 border-destructive/40 text-[9px] text-destructive">error</Badge>
+              <Badge
+                variant="outline"
+                className="h-4 border-destructive/40 text-[9px] text-destructive"
+              >
+                error
+              </Badge>
             )}
             {hasChildren && (
-              <Badge variant="outline" className="h-4 border-border text-[9px] text-muted-foreground">
+              <Badge
+                variant="outline"
+                className="h-4 border-border text-[9px] text-muted-foreground"
+              >
                 {step.children!.length} 子步骤
               </Badge>
             )}
           </div>
           <div className="mt-1 flex items-center gap-2">
-            <div className="relative h-1 flex-1 overflow-hidden rounded-full bg-border/60" title={`占本次调用 ${pctLabel}`}>
+            <div
+              className="relative h-1 flex-1 overflow-hidden rounded-full bg-border/60"
+              title={`占本次调用 ${pctLabel}`}
+            >
               <div
                 className={`h-full ${heatBar[heat]} transition-all`}
                 style={{ width: `${Math.max(pct * 100, 2)}%` }}
               />
             </div>
-            <span className={`shrink-0 font-mono text-[10px] tabular-nums ${heatText[heat]}`}>{pctLabel}</span>
+            <span className={`shrink-0 font-mono text-[10px] tabular-nums ${heatText[heat]}`}>
+              {pctLabel}
+            </span>
           </div>
           {step.note && (
             <p className="mt-1 text-[11px] text-muted-foreground">
@@ -1126,5 +1289,3 @@ function TraceNode({
     </li>
   );
 }
-
-
