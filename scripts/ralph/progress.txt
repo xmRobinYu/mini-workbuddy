@@ -278,3 +278,14 @@
   - 陷阱：此 harness 中以 `nohup` 启动的 mock 子进程可能会在父命令结束后被回收；启动后必须用 `ss` 或 HTTP 请求确认端口实际监听。
   - 有用的上下文：mock 读取用户消息中的精确 `conversations/{conversation_id}/outputs/...` 路径；使用新会话可保证它从 write → read → execute 三轮开始。
 ---
+
+## 2026-07-20 22:50 - US-011（本轮收口）
+- 主闭环 US-001~US-011 全部落地并回写 prd.json 状态。本轮补齐此前缺失的实现：US-004 清理 run_command 文案残留；US-009 新增后端 Skills 管理 API（schemas/skill.py、services/skills_store.py、api/skills.py，含 list/create/get/update/delete/import/scan，Zip Slip 防护 + 大小/数量上限，目录限制 workspace/config/skills/）；US-010 新增前端 skillsApi + skills.tsx 从 mock-store 切到真实 API，Agent 编辑弹窗新增「已启用技能」多选（仅 enabled）；US-006 补 conversationsApi.rename/remove。
+- 更改的文件：backend/app/{api/skills.py,api/router.py,schemas/skill.py,services/skills_store.py}、backend/tests/test_skills_api.py、frontend/src/lib/api/{skills.ts,chat.ts,types.ts,index.ts}、frontend/src/routes/{skills.tsx,agents.tsx,logs.tsx,settings.tsx,lib/mock-store.ts}、prd.json、scripts/ralph/prd.json。
+- 验证：后端 `uv run pytest`（161 passed，含新增 test_skills_api.py 14 条与 test_chat_send_api.py::test_closed_loop_stream_outputs_and_conversation_restore 闭环用例）、`uv run mypy app` 通过；前端 `tsc -b --noEmit`、`npm run build` 通过，改动文件 ESLint/Prettier 通过。
+- **未来迭代的学习：**
+  - pattern：Skills 注册表（skills.json）+ 磁盘目录（skills/{slug}/SKILL.md）双写；Agent Loop 仍直接读磁盘 SKILL.md，registry 的 enabled 是唯一装载门控。
+  - 陷阱：Pydantic slug 正则会先于 store 层拦截非法 slug（返回 422 而非 400），测试应断言 >=400 而非固定码；HTTP_413_REQUEST_ENTITY_TOO_LARGE 已废弃，用 starlette HTTP_413_CONTENT_TOO_LARGE。
+  - 陷阱：测试会重置 workspace 运行态，浏览器闭环验收须在 pytest 之后重新读取 /api/models、/api/agents、/api/tools、/api/skills。
+  - 未做：US-012（记忆只读 API）/US-013（日志投影 API）为计划中 P1 可选项，按计划非主闭环阻塞项，未在本轮实现。
+---
