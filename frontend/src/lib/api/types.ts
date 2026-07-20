@@ -169,6 +169,46 @@ export interface SkillImportResult {
   files: number;
 }
 
+// ── Memory (backend/app/schemas/memory.py) ───────────────────────────────────
+
+/** GET /api/memory/long-term response. */
+export interface LongTermMemoryRead {
+  content: string;
+  bytes: number;
+  max_bytes: number;
+  items: number;
+}
+
+/** PUT /api/memory/long-term payload. */
+export interface LongTermMemoryUpdate {
+  content: string;
+}
+
+/** A single short-term daily memory file. */
+export interface ShortTermFileRead {
+  date: string;
+  filename: string;
+  bytes: number;
+  items: number;
+  content: string;
+}
+
+/** GET /api/memory/short-term response. */
+export interface ShortTermMemoryRead {
+  files: ShortTermFileRead[];
+  total_items: number;
+}
+
+/** GET /api/memory/stats response. */
+export interface MemoryStatsRead {
+  long_term_bytes: number;
+  long_term_max_bytes: number;
+  long_term_items: number;
+  short_term_files: number;
+  short_term_items: number;
+  archived_items: number;
+}
+
 // ── Generic envelope ────────────────────────────────────────────────────────
 
 /** FastAPI error body for non-2xx responses. */

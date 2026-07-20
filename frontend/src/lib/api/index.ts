@@ -27,3 +27,10 @@ export {
   type ChatSendPayload,
 } from "./chat";
 export { skillsApi, type SkillViewModel, type SkillSource, type SkillForm } from "./skills";
+export {
+  memoryApi,
+  type LongTermMemoryViewModel,
+  type ShortTermFileViewModel,
+  type ShortTermMemoryViewModel,
+  type MemoryStatsViewModel,
+} from "./memory";
