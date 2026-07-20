@@ -57,7 +57,7 @@
         "Use agent-browser to open the create/edit dialog and verify required fields include Model ID mapped to backend model"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "",
       "retryCount": 0,
       "blocked": false
@@ -97,7 +97,7 @@
         "Use agent-browser to open /agents, edit an agent tool selection, save, refresh, and confirm the selection persisted"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "",
       "retryCount": 0,
       "blocked": false
@@ -117,7 +117,7 @@
         "Use agent-browser to create a conversation, rename it, refresh the page, and confirm the renamed conversation remains"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "",
       "retryCount": 0,
       "blocked": false
@@ -136,7 +136,7 @@
         "Use agent-browser to open /, select an agent, send a short message, and confirm the UI enters streaming/thinking state from SSE instead of only the old mock timeout reply"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "",
       "retryCount": 0,
       "blocked": false
@@ -154,7 +154,7 @@
         "Tests pass for any pure mapper helpers added"
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "",
       "retryCount": 0,
       "blocked": false

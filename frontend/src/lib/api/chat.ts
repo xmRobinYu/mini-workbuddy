@@ -67,6 +67,12 @@ export const conversationsApi = {
   get(id: string): Promise<ConversationDetail> {
     return apiClient.get<ConversationDetail>(`/api/conversations/${id}`);
   },
+  rename(id: string, title: string): Promise<ConversationSummary> {
+    return apiClient.put<ConversationSummary>(`/api/conversations/${id}`, { title });
+  },
+  remove(id: string): Promise<void> {
+    return apiClient.delete<void>(`/api/conversations/${id}`);
+  },
   outputs(id: string): Promise<OutputFile[]> {
     return apiClient.get<OutputFile[]>(`/api/conversations/${id}/outputs`);
   },
