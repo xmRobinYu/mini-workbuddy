@@ -305,3 +305,16 @@
   - 陷阱：`MEMORY_ARCHIVE_DIR` 仅 `memory_stats` 用到 `rglob` 计数；测试隔离需同时 patch `memory_store.*` 与 `app.core.config.*`（config 被其它模块 import）。
   - workflowMode 未设置 → develop_and_validate，开发阶段不置 `passes=true`，交由 Validator。
 ---
+
+
+## 2026-07-21 07:10 - US-013
+- 实现日志投影 API 与页面接线：后端 `GET /api/logs`（type/q/level/status/limit 过滤），由 `logs_store.project_logs` 从 conversations JSONL 即时投影执行事件（assistant message→model 行，tool_result→tool/skill 行），`input` 通过 `tool_call_id` 关联 `tool_call` 事件回填，失败结果归为 error 级别；纯只读，不写回 conversations store，损坏 JSONL 行被跳过。前端新增 `logsApi`（`lib/api/logs.ts` + types）与 `logs.tsx` 改为调用真实 API，删除 mock-store 数据源。
+- 更改的文件：backend/app/{api/logs.py,api/router.py,schemas/log.py,services/logs_store.py}、backend/tests/test_logs_api.py、frontend/src/lib/api/{logs.ts,index.ts,types.ts}、frontend/src/routes/logs.tsx。
+- 验证：后端 `uv run pytest`（179 passed，含 11 条 test_logs_api）、`uv run mypy app` Success（42 文件）；前端 `npm exec -- tsc -b --noEmit` exit 0、改动文件 ESLint（仅 4 条既有 `revalidateNonce` warning，非本次引入）exit 0、`npm run build` 通过。
+- 浏览器：复用 `:8000` 后端（重启加载新代码）并在 `:5193` 启动前端 dev server；`/logs` 页面渲染 2 条真实投影的 model 行（"第一条"/"第二条"），网络记录 `GET /api/logs (Fetch) 200` 证明请求真实到达后端；另用脚本注入 tool_call→tool_result→message 验证投影出 `read_file` 工具行与 `chat.completion` 模型行。
+- **未来迭代的学习：**
+  - pattern：日志是只读投影而非独立存储；新增日志行类别时改 `logs_store._classify` + `schemas/log.py` 的 `LogType`，前端在 `types.ts`/`logs.ts` mapper 同步即可，无需新数据库。
+  - pattern：投影需把 `tool_call`（请求）与 `tool_result`（结果）按 `tool_call_id` join 才能回填 `input`；`_build_tool_arguments_index` 一次扫描建索引，避免二次遍历。
+  - 陷阱：`logs.tsx` 既有的 `revalidateNonce` exhaustive-deps warning 是历史遗留，非本 story 引入；质量门只要求改动文件 0 error，warning 保留。
+  - workflowMode 未设置 → develop_and_validate，开发阶段不置 passes=true，交由 Validator。
+---
