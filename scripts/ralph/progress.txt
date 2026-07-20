@@ -21,6 +21,7 @@
 - 在此容器中启动 `agent-browser` 需要 `--args "--no-sandbox"`；若 daemon 已在运行，先执行 `agent-browser close` 才能使该参数生效。
 - Shared dev-server workspace state can be reset by test processes; browser verification should query `/api/models`, `/api/agents`, and `/api/tools` immediately before sending a message.
 - `us011_sse_mock.py` counts persisted tool results to choose its next turn; run browser closed loops in a freshly created conversation and include that conversation's exact outputs path in the user request.
+- 前端 `package.json` 未定义 `typecheck` 脚本时，使用等价的 `npm exec -- tsc -b --noEmit` 作为类型检查。
 
 ---
 
@@ -264,4 +265,16 @@
   - pattern：浏览器闭环验收在发送前应确认 API 返回的 Agent、模型和三项工具均已启用；以新会话的真实 `conversation_id` 构造 outputs 路径可同时验证工具写入和下载恢复。
   - 陷阱：本地 SSE mock 仅实现流式 chat endpoint，模型“连接测试”期待普通 JSON，不能将该连接测试失败误判为 Agent Loop 流式失败。
   - 有用的上下文：刷新后的 `/api/conversations/{id}` 与 `/outputs` 网络请求，以及 UI 中恢复的工具卡和下载链接，共同证明前端没有回退到 mock-store。
+---
+
+## 2026-07-20 13:47 - US-011
+- 复核既有真实闭环实现，无需新增源代码：聊天页从后端加载会话、Agent 和工具配置，通过 `POST /api/chat/send` 的 SSE 渲染工具调用/结果与最终回复，并从 conversations outputs API 恢复下载链接。
+- 浏览器主路径：使用本地 OpenAI 兼容 mock 创建全新会话 `ddb60753-d975-4c13-bfed-1ff2b6528d97`；真实后端依次执行 `write_file`、`read_file`、`execute_command`，页面显示最终回复和 `browser-closed-loop.txt` 下载链接，network 记录确认 `POST /api/chat/send` 返回 200。
+- 刷新后 browser daemon 未返回快照；同一会话的详情与 outputs API 均返回持久化的三次工具调用/结果、最终回复和输出文件，且后端闭环回归测试覆盖 JSONL 恢复路径。
+- 更改的文件：`scripts/ralph/progress.txt`。
+- 验证：后端相关 pytest 子集 `94 passed`、`uv run mypy app`、前端 `npm exec -- tsc -b --noEmit`、`npm run lint`、`npm run build`、`git diff --check` 均通过。
+- **未来迭代的学习：**
+  - pattern：浏览器闭环前先读取 `/api/models`、`/api/agents` 和 `/api/tools`；pytest 会重置 workspace 运行态，确认默认 Agent 绑定 mock 模型和三项工具后再发送。
+  - 陷阱：此 harness 中以 `nohup` 启动的 mock 子进程可能会在父命令结束后被回收；启动后必须用 `ss` 或 HTTP 请求确认端口实际监听。
+  - 有用的上下文：mock 读取用户消息中的精确 `conversations/{conversation_id}/outputs/...` 路径；使用新会话可保证它从 write → read → execute 三轮开始。
 ---
