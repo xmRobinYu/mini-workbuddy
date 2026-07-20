@@ -243,6 +243,17 @@
   - 全仓前端 lint 的既有 Prettier 债务与 story 无关时，保留完整失败基线，并对修改文件执行 ESLint/Prettier 以验证本次范围。
 ---
 
+## 2026-07-20 13:44 - US-011
+- 复核已提交的真实闭环实现：聊天页通过 `/api/agents`、`/api/tools` 和 `/api/conversations` 恢复配置，使用 `POST /api/chat/send` 的 SSE 展示工具调用、结果和最终内容，并通过 outputs API 提供下载。
+- 浏览器主路径验证：以本地 `us011_sse_mock.py`、真实后端和临时模型/Agent 配置，新会话成功依次执行 `write_file`、`read_file`、`execute_command`；页面显示三个工具参数与成功结果、最终文本“已写入、读取并校验浏览器闭环产物。”以及 `browser-closed-loop.txt`（25 B）。网络记录确认 `POST /api/chat/send` 返回 200。
+- 刷新验证：页面从后端恢复持久化的会话工具记录和 outputs；验证期间共享 workspace 被另一测试进程重置，临时会话随后返回 404，故已不保留测试配置或产物。
+- 更改的文件：`scripts/ralph/progress.txt`。
+- 验证：后端 `uv run pytest`（147 passed）和 `uv run mypy app` 通过；前端 `tsc -b --noEmit`、`npm run build`、US-011 文件的 ESLint 与 Prettier 检查通过。全仓 `npm run lint` 仍因 590 个本范围外的既有 Prettier 问题失败。
+- **未来迭代的学习：**
+  - pattern：浏览器闭环可通过真实 `/api/chat/send` 的网络请求、工具卡片、outputs 下载入口三重证据验证，避免仅依据 mock 文本判断。
+  - 陷阱：共享 workspace 可被并行 pytest 重置；浏览器闭环应在质量检查后立即完成，并把临时模型、Agent 和会话视为短暂状态。
+---
+
 ## 2026-07-20 13:11 - US-011
 - 复核既有真实闭环实现并完成浏览器主路径：复用本地 OpenAI 兼容 SSE mock，浏览器使用默认 Agent 发送任务后，页面由后端 SSE 显示 `write_file`、`read_file`、`execute_command` 三项工具调用及结果、最终回复和 `browser-closed-loop.txt` 下载入口。
 - 刷新页面后，浏览器重新请求会话详情与 outputs API，恢复同一任务、三张完成的工具卡和下载入口；未依赖 mock-store 种子。
