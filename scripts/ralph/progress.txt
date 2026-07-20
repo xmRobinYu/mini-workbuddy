@@ -20,6 +20,7 @@
 - For browser closed-loop checks, use a local OpenAI-compatible SSE mock and ask it to write under `conversations/{conversation_id}/outputs/`; this makes the persisted download visible after refresh.
 - 在此容器中启动 `agent-browser` 需要 `--args "--no-sandbox"`；若 daemon 已在运行，先执行 `agent-browser close` 才能使该参数生效。
 - Shared dev-server workspace state can be reset by test processes; browser verification should query `/api/models`, `/api/agents`, and `/api/tools` immediately before sending a message.
+- `us011_sse_mock.py` counts persisted tool results to choose its next turn; run browser closed loops in a freshly created conversation and include that conversation's exact outputs path in the user request.
 
 ---
 
@@ -220,6 +221,16 @@
 - **未来迭代的学习：**
   - 在受限容器中，为新 `agent-browser` session 首次启动传入 `--args "--no-sandbox"`；复用旧 session 可能保留不兼容的启动参数。
   - 浏览器闭环验证结束后，应恢复临时模型配置并删除临时会话，避免污染共享 workspace。
+---
+
+## 2026-07-20 13:18 - US-011
+- 复核并完成真实闭环主路径：以本地 OpenAI 兼容 SSE mock 驱动一个全新会话，浏览器通过后端 `POST /api/chat/send` 依次执行 `write_file`、`read_file`、`execute_command`，并显示最终回复与 `browser-closed-loop.txt` 下载入口。
+- 刷新页面后，会话从后端 JSONL 恢复用户消息、三张工具卡片及结果，outputs API 恢复相同下载入口；未使用前端 mock-store 种子。
+- 更改的文件：`scripts/ralph/progress.txt`。
+- 验证：后端相关 pytest 子集（models/models-test/tools/agents/conversations/chat）`94 passed`，`uv run mypy app` 通过；前端 `tsc -b --noEmit` 与 `npm run build` 通过。`npm run lint` 复现全仓既有 590 条 Prettier 错误，均不在本 story 变更范围内；`package.json` 未定义 `typecheck` 脚本，已使用等价 tsc 命令。
+- **未来迭代的学习：**
+  - 浏览器闭环必须选用没有历史 tool result 的唯一会话；mock 根据持久化历史决定下一轮，否则可能只返回最终文本，导致无法证明本轮三工具执行。
+  - 通过 `agent-browser network requests --filter /api/chat/send` 与刷新后的可访问性树，可同时证明 POST SSE 来源和持久化 UI 恢复。
 ---
 
 ## 2026-07-20 12:59 - US-011
