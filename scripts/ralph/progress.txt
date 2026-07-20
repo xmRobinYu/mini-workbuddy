@@ -221,3 +221,13 @@
   - 在受限容器中，为新 `agent-browser` session 首次启动传入 `--args "--no-sandbox"`；复用旧 session 可能保留不兼容的启动参数。
   - 浏览器闭环验证结束后，应恢复临时模型配置并删除临时会话，避免污染共享 workspace。
 ---
+
+## 2026-07-20 12:59 - US-011
+- 复核已提交的真实闭环实现：聊天页从后端加载模型绑定、Agent、工具和会话，通过 `POST /api/chat/send` 的 SSE 渲染工具调用与结果，并通过 outputs API 显示产物下载。
+- 更改的文件：`scripts/ralph/progress.txt`。
+- 验证：后端 models/tools/agents/conversations/chat pytest 子集（83 passed）与 `uv run mypy app` 通过；前端 `tsc -b --noEmit`、US-011 文件 ESLint/Prettier、`npm run build`、`git diff --check` 通过。全仓 `npm run lint` 仍因 590 个 US-011 范围外的既有 Prettier 错误失败；`package.json` 未定义 `typecheck` 脚本，已执行等价 tsc 命令。
+- 浏览器验证：复用 `5192` 前端和 `8000` 后端，并启动 `us011_sse_mock.py` 于 `18080`。新会话真实调用 `write_file` → `read_file` → `execute_command`，UI 显示三项工具、成功结果和 `browser-closed-loop.txt` 下载入口；重新打开页面并选回该会话后，浏览器再次请求会话详情及 outputs，恢复相同的工具记录和产物。
+- **未来迭代的学习：**
+  - 闭环浏览器验收要在相关 pytest 完成后重新读取 `/api/models`、`/api/agents`、`/api/tools`；测试会重置 workspace 配置。
+  - 全仓前端 lint 的既有 Prettier 债务与 story 无关时，保留完整失败基线，并对修改文件执行 ESLint/Prettier 以验证本次范围。
+---
