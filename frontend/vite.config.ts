@@ -12,4 +12,19 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  vite: {
+    server: {
+      // Proxy /api requests to the FastAPI backend during local dev so the
+      // frontend can talk to `/api/*` without CORS. The Lovable sandbox is
+      // detected via DEV_SERVER__PROJECT_PATH / LOVABLE_SANDBOX and forces
+      // port 8080; in that environment the proxy target should be overridden
+      // via VITE_API_TARGET.
+      proxy: {
+        "/api": {
+          target: process.env.VITE_API_TARGET ?? "http://127.0.0.1:8000",
+          changeOrigin: true,
+        },
+      },
+    },
+  },
 });

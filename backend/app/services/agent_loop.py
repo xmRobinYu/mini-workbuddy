@@ -517,7 +517,7 @@ async def run_agent_loop(
         "Content-Type": "application/json",
     }
     chat_url = _build_chat_url(str(model.get("base_url", "")))
-    model_name = model.get("name", "")
+    model_name = model.get("model") or model.get("name", "")
 
     rounds = 0
     while True:

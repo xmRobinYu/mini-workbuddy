@@ -357,6 +357,68 @@ class RalphSequentialFlowTest(unittest.TestCase):
         self.assertIn(("error", "US-021"), dashboard_states)
         mark_failure.assert_called_once()
 
+    def test_main_appends_context_limit_restart_to_progress_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prd_path, db_path, runtime_path = _seed_runtime_state(
+                tmpdir,
+                {
+                    "project": "SkillHub",
+                    "branchName": "test-branch",
+                    "userStories": [
+                        {
+                            "id": "US-021",
+                            "title": "Story",
+                            "description": "desc",
+                            "acceptanceCriteria": [],
+                            "priority": 1,
+                            "passes": False,
+                            "notes": "",
+                            "retryCount": 0,
+                            "blocked": False,
+                        }
+                    ],
+                },
+            )
+            progress_path = Path(tmpdir) / "progress.txt"
+
+            with (
+                patch.object(ralph, "PRD_FILE", prd_path),
+                patch.object(ralph, "STATE_DB_FILE", db_path),
+                patch.object(ralph, "RUNTIME_PRD_FILE", runtime_path),
+                patch.object(ralph, "MAX_ITERATIONS", 1),
+                patch.object(ralph.config, "get_progress_file", return_value=progress_path),
+                patch.object(ralph.dashboard, "start", return_value=None),
+                patch.object(ralph.dashboard, "set_state", return_value=None),
+                patch.object(
+                    ralph,
+                    "run_developer",
+                    return_value=ralph.ChildProcessResult(context_limit_exceeded=True),
+                ),
+                patch.object(ralph, "get_target_story_id", return_value="US-021"),
+                patch.object(ralph, "_mark_story_attempt_failure") as mark_failure,
+                patch.object(ralph.time, "sleep", return_value=None),
+                patch.object(sys, "argv", ["ralph.py"]),
+            ):
+                with self.assertRaises(SystemExit) as ctx:
+                    ralph.main()
+
+            progress_log = progress_path.read_text(encoding="utf-8")
+            story = ralph.state_store.get_story(
+                "US-021",
+                prd_path=prd_path,
+                db_path=db_path,
+            )
+            events = ralph.state_store.get_context_limit_events(db_path=db_path)
+
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertIn("US-021", progress_log)
+        self.assertIn("上下文超限", progress_log)
+        self.assertIn("未计入常规重试次数", progress_log)
+        self.assertEqual(story["retryCount"], 0)
+        self.assertFalse(story["blocked"])
+        self.assertEqual(len(events), 1)
+        mark_failure.assert_not_called()
+
     def test_main_skips_validator_when_story_is_resolved_after_developer(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             prd_path, db_path, runtime_path = _seed_runtime_state(

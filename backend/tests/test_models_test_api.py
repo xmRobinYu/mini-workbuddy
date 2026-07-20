@@ -63,6 +63,7 @@ def _create_model_via_api(client: TestClient) -> str:
         "/api/models",
         json={
             "name": "test-model",
+            "model": "test-supplier-model",
             "provider": "custom",
             "base_url": "https://api.example.com/v1",
             "api_key": "sk-test-key",
@@ -101,7 +102,13 @@ def test_connection_success_returns_success_and_latency() -> None:
     client = TestClient(create_app())
     model_id = _create_model_via_api(client)
 
-    mock_post = AsyncMock(return_value=_mock_response(200))
+    captured: dict[str, Any] = {}
+
+    def _capture(*_args: Any, **kwargs: Any) -> Any:
+        captured["payload"] = kwargs.get("json") or {}
+        return _mock_response(200)
+
+    mock_post = AsyncMock(side_effect=_capture)
     with patch("httpx.AsyncClient.post", mock_post):
         resp = client.post(f"/api/models/{model_id}/test")
 
@@ -111,6 +118,8 @@ def test_connection_success_returns_success_and_latency() -> None:
     assert isinstance(body["latency_ms"], int)
     assert body["latency_ms"] >= 0
     assert body["error"] is None
+    # AC: probe must use the supplier model name, not the display name.
+    assert captured["payload"]["model"] == "test-supplier-model"
 
 
 def test_connection_timeout_returns_timeout_error() -> None:
@@ -280,6 +289,7 @@ def test_connection_test_uses_env_fallback_key() -> None:
         "/api/models",
         json={
             "name": "env-model",
+            "model": "env-supplier-model",
             "provider": "custom",
             "base_url": "https://api.example.com/v1",
             "api_key": "ignored",

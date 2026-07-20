@@ -93,7 +93,7 @@ async def test_model_connection(
         }
 
     chat_url = _build_chat_url(base_url)
-    probe_model = model_name_for_probe or model.get("name", "test")
+    probe_model = model_name_for_probe or model.get("model") or model.get("name", "test")
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",

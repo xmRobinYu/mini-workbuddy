@@ -499,6 +499,22 @@ def _mark_story_attempt_failure(
     )
 
 
+def _append_context_limit_progress_log(story_id: str) -> None:
+    progress_file = config.get_progress_file(PRD_FILE)
+    timestamp = time.strftime("%Y-%m-%d %H:%M")
+    entry = (
+        f"\n## {timestamp} - {story_id}\n"
+        "- [自动重启] Claude 上下文超限，已终止当前 Agent；"
+        "2 秒后以新 Agent 进入下一轮继续。未计入常规重试次数。\n"
+    )
+    try:
+        progress_file.parent.mkdir(parents=True, exist_ok=True)
+        with progress_file.open("a", encoding="utf-8") as file:
+            file.write(entry)
+    except OSError as error:
+        print(f"⚠️  无法追加上下文超限进度日志: {error}")
+
+
 def run_developer(iteration: int, story_id: str | None) -> ChildProcessResult:
     """
     调用开发 Agent
@@ -909,6 +925,7 @@ def main():
                             message="Claude 上下文超限，已终止当前 Agent 并将在下一轮重新创建。",
                             db_path=STATE_DB_FILE,
                         )
+                        _append_context_limit_progress_log(current_story)
                         state_store.mark_story_phase_finished(
                             current_story,
                             prd_path=PRD_FILE,
