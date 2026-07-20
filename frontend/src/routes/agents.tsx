@@ -6,9 +6,11 @@ import {
   agentsApi,
   modelsApi,
   toolsApi,
+  skillsApi,
   type AgentViewModel,
   type ModelViewModel,
   type BuiltinTool,
+  type SkillViewModel,
 } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -66,24 +68,28 @@ function AgentsPage() {
   const [agents, setAgents] = useState<AgentViewModel[]>([]);
   const [models, setModels] = useState<ModelViewModel[]>([]);
   const [tools, setTools] = useState<BuiltinTool[]>([]);
+  const [skills, setSkills] = useState<SkillViewModel[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editor, setEditor] = useState<AgentEditor>(EMPTY_EDITOR);
   const [saving, setSaving] = useState(false);
 
   const enabledTools = useMemo(() => tools.filter((tool) => tool.enabled), [tools]);
+  const enabledSkills = useMemo(() => skills.filter((skill) => skill.enabled), [skills]);
 
   async function load() {
     setLoading(true);
     try {
-      const [agentList, modelList, toolList] = await Promise.all([
+      const [agentList, modelList, toolList, skillList] = await Promise.all([
         agentsApi.list(),
         modelsApi.list(),
         toolsApi.list(),
+        skillsApi.list(),
       ]);
       setAgents(agentList);
       setModels(modelList);
       setTools(toolList);
+      setSkills(skillList);
     } catch (error) {
       toast.error("加载 Agent 配置失败", { description: errorMessage(error) });
     } finally {
@@ -166,6 +172,15 @@ function AgentsPage() {
       tools: current.tools.includes(name)
         ? current.tools.filter((item) => item !== name)
         : [...current.tools, name],
+    }));
+  }
+
+  function toggleSkill(slug: string) {
+    setEditor((current) => ({
+      ...current,
+      skills: current.skills.includes(slug)
+        ? current.skills.filter((item) => item !== slug)
+        : [...current.skills, slug],
     }));
   }
 
@@ -313,6 +328,25 @@ function AgentsPage() {
                 ))}
               </div>
             </div>
+            {enabledSkills.length > 0 && (
+              <div className="grid gap-2">
+                <Label>已启用技能</Label>
+                <div className="grid gap-2 rounded-md border border-border p-3 sm:grid-cols-2">
+                  {enabledSkills.map((skill) => (
+                    <label key={skill.id} className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={editor.skills.includes(skill.slug)}
+                        onCheckedChange={() => toggleSkill(skill.slug)}
+                      />
+                      <span className="truncate">{skill.name}</span>
+                      <span className="truncate font-mono text-[10px] text-muted-foreground">
+                        {skill.slug}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="grid gap-1.5">
               <Label htmlFor="agent-md">系统提示词</Label>
               <Textarea

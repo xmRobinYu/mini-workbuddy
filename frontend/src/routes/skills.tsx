@@ -1,8 +1,15 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
-  Plus, Sparkles, Upload, ScanSearch, FolderTree, Pencil, Trash2,
+  Plus,
+  Sparkles,
+  Upload,
+  ScanSearch,
+  FolderTree,
+  Pencil,
+  Trash2,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,20 +20,31 @@ import { Switch } from "@/components/ui/switch";
 import { PageHeader } from "@/components/page-header";
 import { ListToolbar } from "@/components/list-toolbar";
 import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { skillsStore, useStore, uid, recordHistory, type Skill } from "@/lib/mock-store";
-import { validateSkill } from "@/lib/validators";
+import { skillsApi, type SkillViewModel, type SkillForm, type SkillSource } from "@/lib/api";
 import { EmptyState, FieldHint } from "@/components/empty-state";
-import { ConnectorBindingEditor, ConnectorBindingBadge } from "@/components/connector-binding-editor";
-
 
 type SkillsSearch = { q?: string; filter?: string; sort?: string; order?: "asc" | "desc" };
 const FILTERS = ["全部", "已启用", "内置", "自建", "导入"] as const;
@@ -35,6 +53,12 @@ const SKILL_SORTS = [
   { value: "files", label: "文件数" },
   { value: "source", label: "来源" },
 ];
+
+const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "未知错误";
+}
 
 export const Route = createFileRoute("/skills")({
   validateSearch: (s: Record<string, unknown>): SkillsSearch => ({
@@ -46,8 +70,32 @@ export const Route = createFileRoute("/skills")({
   component: SkillsPage,
 });
 
+const EMPTY_FORM: SkillForm = {
+  id: null,
+  name: "",
+  slug: "",
+  description: "",
+  enabled: true,
+  content: "",
+};
+
+function validateForm(
+  form: SkillForm,
+  skills: SkillViewModel[],
+): { ok: true } | { ok: false; message: string } {
+  if (!form.name.trim()) return { ok: false, message: "名称不能为空" };
+  if (!SLUG_RE.test(form.slug.trim())) {
+    return { ok: false, message: "slug 仅允许小写字母、数字与短横线，且以字母或数字开头" };
+  }
+  if (skills.some((s) => s.id !== form.id && s.slug === form.slug.trim())) {
+    return { ok: false, message: "slug 已被占用" };
+  }
+  return { ok: true };
+}
+
 function SkillsPage() {
-  const skills = useStore(skillsStore);
+  const [skills, setSkills] = useState<SkillViewModel[]>([]);
+  const [loading, setLoading] = useState(true);
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const q = search.q ?? "";
@@ -65,14 +113,31 @@ function SkillsPage() {
         return next;
       },
     });
-  const [editing, setEditing] = useState<Skill | null>(null);
+  const [editing, setEditing] = useState<SkillForm | null>(null);
   const [open, setOpen] = useState(false);
-  const [toDelete, setToDelete] = useState<Skill | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [toDelete, setToDelete] = useState<SkillViewModel | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    try {
+      setSkills(await skillsApi.list());
+    } catch (error) {
+      toast.error("加载 Skills 失败", { description: errorMessage(error) });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load();
+  }, []);
 
   const filtered = useMemo(() => {
     const kw = q.trim().toLowerCase();
     let arr = skills.filter((s) => {
-      if (kw && !`${s.name} ${s.slug} ${s.desc}`.toLowerCase().includes(kw)) return false;
+      if (kw && !`${s.name} ${s.slug} ${s.description}`.toLowerCase().includes(kw)) return false;
       if (filter === "已启用") return s.enabled;
       if (filter === "内置") return s.source === "内置";
       if (filter === "自建") return s.source === "自建";
@@ -89,55 +154,100 @@ function SkillsPage() {
     return arr;
   }, [skills, q, filter, sort, order]);
 
-
   function openNew() {
-    setEditing({ id: "", name: "", slug: "", desc: "", files: 1, enabled: true, source: "自建" });
+    setEditing({ ...EMPTY_FORM });
     setOpen(true);
   }
-  function openEdit(s: Skill) { setEditing(s); setOpen(true); }
-  function save(s: Skill) {
-    const r = validateSkill(s, skills);
+  async function openEdit(s: SkillViewModel) {
+    // SKILL.md content is read from disk by the loop; the editor treats the
+    // description as the editable summary (slug is immutable after creation).
+    setEditing({
+      id: s.id,
+      name: s.name,
+      slug: s.slug,
+      description: s.description,
+      enabled: s.enabled,
+      content: "",
+    });
+    setOpen(true);
+  }
+  async function save(form: SkillForm) {
+    const r = validateForm(form, skills);
     if (!r.ok) {
-      toast.error(`保存失败：${r.firstMessage}`, { description: r.suggestion });
-      return { ok: false as const, errors: r.errors };
+      toast.error(`保存失败：${r.message}`);
+      return;
     }
-    if (s.id) {
-      skillsStore.replace((x) => x.id === s.id, s);
-      recordHistory("skills", `编辑 Skill「${s.name}」`);
-      toast.success("Skill 已更新");
-    } else {
-      skillsStore.add({ ...s, id: uid() });
-      recordHistory("skills", `新增 Skill「${s.name}」`);
-      toast.success("Skill 已新增");
+    setSaving(true);
+    try {
+      if (form.id) {
+        const updated = await skillsApi.update(form.id, form);
+        setSkills((cur) => cur.map((s) => (s.id === updated.id ? updated : s)));
+        toast.success("Skill 已更新");
+      } else {
+        const created = await skillsApi.create(form);
+        setSkills((cur) => [...cur, created]);
+        toast.success("Skill 已新增");
+      }
+      setOpen(false);
+    } catch (error) {
+      toast.error("保存 Skill 失败", { description: errorMessage(error) });
+    } finally {
+      setSaving(false);
     }
-    setOpen(false);
-    return { ok: true as const, errors: {} };
   }
-  function toggle(s: Skill, enabled: boolean) {
-    skillsStore.update((x) => x.id === s.id, { enabled });
-    recordHistory("skills", `${enabled ? "启用" : "停用"} Skill「${s.name}」`);
+  async function toggle(s: SkillViewModel, enabled: boolean) {
+    // Optimistic update; rollback on failure.
+    setSkills((cur) => cur.map((x) => (x.id === s.id ? { ...x, enabled } : x)));
+    try {
+      const updated = await skillsApi.update(s.id, {
+        id: s.id,
+        name: s.name,
+        slug: s.slug,
+        description: s.description,
+        enabled,
+        content: "",
+      });
+      setSkills((cur) => cur.map((x) => (x.id === updated.id ? updated : x)));
+    } catch (error) {
+      setSkills((cur) => cur.map((x) => (x.id === s.id ? { ...x, enabled: !enabled } : x)));
+      toast.error("更新 Skill 失败", { description: errorMessage(error) });
+    }
   }
-  function remove(s: Skill) {
-    skillsStore.remove((x) => x.id === s.id);
-    recordHistory("skills", `删除 Skill「${s.name}」`);
-    toast.success("已删除");
-    setToDelete(null);
+  async function remove(s: SkillViewModel) {
+    try {
+      await skillsApi.remove(s.id);
+      setSkills((cur) => cur.filter((x) => x.id !== s.id));
+      toast.success("已删除");
+    } catch (error) {
+      toast.error("删除 Skill 失败", { description: errorMessage(error) });
+    } finally {
+      setToDelete(null);
+    }
   }
-  function scan() {
-    const found: Skill = {
-      id: uid(), name: `扫描技能 ${skills.length + 1}`, slug: `scanned-${uid()}`,
-      desc: "从 workspace 自动扫描发现的示例技能。", files: Math.floor(Math.random() * 5) + 1,
-      enabled: false, source: "扫描发现",
-    };
-    skillsStore.add(found);
-    recordHistory("skills", `扫描发现「${found.name}」`);
-    toast.success(`扫描发现 1 个新技能：${found.name}`);
+  async function scan() {
+    setBusy(true);
+    try {
+      const result = await skillsApi.scan();
+      if (result.discovered.length === 0) {
+        toast.info("没有发现新的技能目录");
+      } else {
+        toast.success(`扫描发现 ${result.discovered.length} 个新技能`);
+      }
+      await load();
+    } catch (error) {
+      toast.error("扫描失败", { description: errorMessage(error) });
+    } finally {
+      setBusy(false);
+    }
   }
   const zipInputRef = useRef<HTMLInputElement>(null);
-  function openZipPicker() { zipInputRef.current?.click(); }
+  function openZipPicker() {
+    zipInputRef.current?.click();
+  }
   async function handleZipFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return;
     const files = Array.from(fileList);
+    setBusy(true);
     let ok = 0;
     for (const file of files) {
       const lower = file.name.toLowerCase();
@@ -150,25 +260,39 @@ function SkillsPage() {
         continue;
       }
       const base = file.name.replace(/\.zip$/i, "");
-      const slugBase = base.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "imported";
-      const kb = (file.size / 1024).toFixed(1);
-      const found: Skill = {
-        id: uid(),
-        name: base || `导入技能 ${skills.length + ok + 1}`,
-        slug: `${slugBase}-${uid().slice(0, 4)}`,
-        desc: `从 ZIP 包「${file.name}」（${kb} KB）导入。`,
-        files: Math.max(1, Math.round(file.size / 8192)),
-        enabled: true,
-        source: "ZIP 导入",
-      };
-      skillsStore.add(found);
-      recordHistory("skills", `ZIP 导入「${found.name}」`);
-      ok++;
+      const slugBase =
+        base
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-|-$/g, "") || "imported";
+      // De-duplicate slug against current list + this batch's imports.
+      const existing = new Set(skills.map((s) => s.slug));
+      let slug = slugBase;
+      let n = 1;
+      while (existing.has(slug)) {
+        slug = `${slugBase}-${n++}`;
+      }
+      existing.add(slug);
+      try {
+        await skillsApi.importZip(file, {
+          id: null,
+          name: base || `导入技能 ${ok + 1}`,
+          slug,
+          description: `从 ZIP 包「${file.name}」导入。`,
+          enabled: true,
+        });
+        ok++;
+      } catch (error) {
+        toast.error(`导入「${file.name}」失败`, { description: errorMessage(error) });
+      }
     }
-    if (ok > 0) toast.success(`已导入 ${ok} 个技能包`);
+    if (ok > 0) {
+      toast.success(`已导入 ${ok} 个技能包`);
+      await load();
+    }
+    setBusy(false);
     if (zipInputRef.current) zipInputRef.current.value = "";
   }
-
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-5">
@@ -177,10 +301,15 @@ function SkillsPage() {
         subtitle="用可复用的技能包扩展执行能力。支持新增、修改、ZIP 导入或从 workspace 扫描发现。"
         action={
           <div className="flex gap-2">
-            <Button variant="outline" className="gap-2" onClick={scan}>
-              <ScanSearch className="h-4 w-4" /> 扫描发现
+            <Button variant="outline" className="gap-2" disabled={busy} onClick={() => void scan()}>
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <ScanSearch className="h-4 w-4" />
+              )}{" "}
+              扫描发现
             </Button>
-            <Button variant="outline" className="gap-2" onClick={openZipPicker}>
+            <Button variant="outline" className="gap-2" disabled={busy} onClick={openZipPicker}>
               <Upload className="h-4 w-4" /> ZIP 导入
             </Button>
             <input
@@ -189,9 +318,12 @@ function SkillsPage() {
               accept=".zip,application/zip,application/x-zip-compressed"
               multiple
               className="hidden"
-              onChange={(e) => handleZipFiles(e.target.files)}
+              onChange={(e) => void handleZipFiles(e.target.files)}
             />
-            <Button className="gap-2 bg-brand text-brand-foreground hover:opacity-90" onClick={openNew}>
+            <Button
+              className="gap-2 bg-brand text-brand-foreground hover:opacity-90"
+              onClick={openNew}
+            >
               <Plus className="h-4 w-4" /> 新增
             </Button>
           </div>
@@ -214,51 +346,70 @@ function SkillsPage() {
           canReset={hasQuery}
           onReset={() => navigate({ search: {} as SkillsSearch })}
         />
-        <div className="mt-2 text-[11px] text-muted-foreground">{filtered.length} / {skills.length}</div>
+        <div className="mt-2 text-[11px] text-muted-foreground">
+          {filtered.length} / {skills.length}
+        </div>
       </div>
 
-
       <div className="mt-4 grid gap-3 md:grid-cols-2">
-        {filtered.map((s) => (
-          <div key={s.id} className="card-warm p-4">
-            <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-soft text-brand">
-                <Sparkles className="h-4 w-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <h3 className="truncate text-[15px] font-semibold text-foreground">{s.name}</h3>
-                  <Badge variant="outline" className="border-border text-[10px] font-normal text-muted-foreground">
-                    {s.source}
-                  </Badge>
-                </div>
-                <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-                  skills/{s.slug}/SKILL.md
-                </p>
-              </div>
-              <Switch checked={s.enabled} onCheckedChange={(v) => toggle(s, v)} />
-            </div>
-            <p className="mt-3 line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">{s.desc}</p>
-            {s.connectorBinding && (
-              <div className="mt-2"><ConnectorBindingBadge binding={s.connectorBinding} /></div>
-            )}
-
-            <div className="mt-3 flex items-center justify-between border-t border-border/70 pt-3">
-              <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                <FolderTree className="h-3 w-3" /> {s.files} 个文件
-              </span>
-              <div className="flex gap-1">
-                <Button variant="ghost" size="sm" className="h-7 gap-1 text-[12px]" onClick={() => openEdit(s)}>
-                  <Pencil className="h-3 w-3" /> 编辑
-                </Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setToDelete(s)}>
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </div>
+        {loading ? (
+          <div className="col-span-full flex justify-center py-16">
+            <Loader2 className="h-5 w-5 animate-spin text-brand" />
           </div>
-        ))}
-        {filtered.length === 0 && (
+        ) : (
+          filtered.map((s) => (
+            <div key={s.id} className="card-warm p-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-soft text-brand">
+                  <Sparkles className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="truncate text-[15px] font-semibold text-foreground">{s.name}</h3>
+                    <Badge
+                      variant="outline"
+                      className="border-border text-[10px] font-normal text-muted-foreground"
+                    >
+                      {s.source}
+                    </Badge>
+                  </div>
+                  <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+                    skills/{s.slug}/SKILL.md
+                  </p>
+                </div>
+                <Switch checked={s.enabled} onCheckedChange={(v) => void toggle(s, v)} />
+              </div>
+              <p className="mt-3 line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">
+                {s.description || "未填写描述"}
+              </p>
+
+              <div className="mt-3 flex items-center justify-between border-t border-border/70 pt-3">
+                <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                  <FolderTree className="h-3 w-3" /> {s.files} 个文件
+                </span>
+                <div className="flex gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 gap-1 text-[12px]"
+                    onClick={() => void openEdit(s)}
+                  >
+                    <Pencil className="h-3 w-3" /> 编辑
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-destructive hover:text-destructive"
+                    onClick={() => setToDelete(s)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+        {!loading && filtered.length === 0 && (
           <div className="col-span-full">
             {skills.length === 0 ? (
               <EmptyState
@@ -270,32 +421,48 @@ function SkillsPage() {
                     <Button size="sm" variant="outline" onClick={openZipPicker} className="gap-1.5">
                       <Upload className="h-3.5 w-3.5" /> ZIP 导入
                     </Button>
-                    <Button size="sm" onClick={openNew} className="gap-1.5 bg-brand text-brand-foreground hover:opacity-90">
+                    <Button
+                      size="sm"
+                      onClick={openNew}
+                      className="gap-1.5 bg-brand text-brand-foreground hover:opacity-90"
+                    >
                       <Plus className="h-3.5 w-3.5" /> 新增
                     </Button>
                   </div>
                 }
               />
             ) : (
-              <EmptyState compact title="没有符合条件的技能" description="调整搜索关键词或筛选条件后重试。" />
+              <EmptyState
+                compact
+                title="没有符合条件的技能"
+                description="调整搜索关键词或筛选条件后重试。"
+              />
             )}
           </div>
         )}
       </div>
 
-      <SkillDialog open={open} onOpenChange={setOpen} value={editing} onSave={save} />
+      <SkillDialog
+        open={open}
+        onOpenChange={setOpen}
+        value={editing}
+        saving={saving}
+        onSave={(f) => void save(f)}
+      />
 
       <AlertDialog open={!!toDelete} onOpenChange={(o) => !o && setToDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>删除技能</AlertDialogTitle>
             <AlertDialogDescription>
-              确定删除 <b>{toDelete?.name}</b> 吗？此操作不可撤销。
+              确定删除 <b>{toDelete?.name}</b> 吗？此操作不可撤销，会同时移除技能目录。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={() => toDelete && remove(toDelete)}>确认删除</AlertDialogAction>
+            <AlertDialogAction onClick={() => toDelete && void remove(toDelete)}>
+              确认删除
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -304,22 +471,28 @@ function SkillsPage() {
 }
 
 function SkillDialog({
-  open, onOpenChange, value, onSave,
+  open,
+  onOpenChange,
+  value,
+  saving,
+  onSave,
 }: {
-  open: boolean; onOpenChange: (v: boolean) => void;
-  value: Skill | null;
-  onSave: (s: Skill) => { ok: boolean; errors: Record<string, string> };
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  value: SkillForm | null;
+  saving: boolean;
+  onSave: (f: SkillForm) => void;
 }) {
-  const [form, setForm] = useState<Skill | null>(null);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  if (open && value && form?.id !== value.id) { setForm(value); setErrors({}); }
+  const [form, setForm] = useState<SkillForm | null>(null);
+  if (open && value && form?.slug !== value.slug) {
+    setForm(value);
+  }
   if (!open && form) setForm(null);
   if (!form) return null;
 
   function handleSave() {
     if (!form) return;
-    const r = onSave(form);
-    if (!r.ok) setErrors(r.errors);
+    onSave(form);
   }
 
   return (
@@ -332,53 +505,67 @@ function SkillDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
               <Label className="text-xs">名称</Label>
-              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="PRD 生成器" aria-invalid={!!errors.name} />
-              {errors.name ? <p className="text-[11px] text-destructive">{errors.name}</p> : <FieldHint>在选择器与列表中显示。</FieldHint>}
+              <Input
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="PRD 生成器"
+              />
+              <FieldHint>在选择器与列表中显示。</FieldHint>
             </div>
             <div className="grid gap-1.5">
               <Label className="text-xs">Slug</Label>
-              <Input className="font-mono" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} placeholder="prd-generator" aria-invalid={!!errors.slug} />
-              {errors.slug ? <p className="text-[11px] text-destructive">{errors.slug}</p> : <FieldHint>目录名，仅允许小写字母、数字与短横线。</FieldHint>}
+              <Input
+                className="font-mono"
+                value={form.slug}
+                onChange={(e) => setForm({ ...form, slug: e.target.value })}
+                placeholder="prd-generator"
+                disabled={!!form.id}
+              />
+              <FieldHint>
+                {form.id ? "创建后不可修改。" : "目录名，仅允许小写字母、数字与短横线。"}
+              </FieldHint>
             </div>
           </div>
           <div className="grid gap-1.5">
             <Label className="text-xs">描述</Label>
-            <Textarea rows={3} value={form.desc} onChange={(e) => setForm({ ...form, desc: e.target.value })} aria-invalid={!!errors.desc} />
-            {errors.desc ? <p className="text-[11px] text-destructive">{errors.desc}</p> : <FieldHint>说明该技能包适用场景与使用前提。</FieldHint>}
+            <Textarea
+              rows={3}
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+            />
+            <FieldHint>说明该技能包适用场景与使用前提。</FieldHint>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          {!form.id && (
             <div className="grid gap-1.5">
-              <Label className="text-xs">文件数</Label>
-              <Input type="number" min={1} value={form.files} onChange={(e) => setForm({ ...form, files: Number(e.target.value) || 1 })} aria-invalid={!!errors.files} />
-              {errors.files ? <p className="text-[11px] text-destructive">{errors.files}</p> : <FieldHint>包含 SKILL.md 在内的资源文件数量。</FieldHint>}
+              <Label className="text-xs">SKILL.md 内容（可选）</Label>
+              <Textarea
+                rows={4}
+                value={form.content}
+                onChange={(e) => setForm({ ...form, content: e.target.value })}
+                placeholder="# 技能名&#10;在此描述执行步骤与输入输出约定。"
+              />
+              <FieldHint>留空将写入以名称为标题的占位骨架。</FieldHint>
             </div>
-            <div className="grid gap-1.5">
-              <Label className="text-xs">来源</Label>
-              <Select value={form.source} onValueChange={(v) => setForm({ ...form, source: v as Skill["source"] })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="内置">内置</SelectItem>
-                  <SelectItem value="自建">自建</SelectItem>
-                  <SelectItem value="ZIP 导入">ZIP 导入</SelectItem>
-                  <SelectItem value="扫描发现">扫描发现</SelectItem>
-                </SelectContent>
-              </Select>
-              <FieldHint>用于分类与筛选。</FieldHint>
-            </div>
-          </div>
+          )}
           <div className="flex items-center gap-2">
-            <Switch checked={form.enabled} onCheckedChange={(v) => setForm({ ...form, enabled: v })} />
-            <Label className="text-xs">默认启用</Label>
+            <Switch
+              checked={form.enabled}
+              onCheckedChange={(v) => setForm({ ...form, enabled: v })}
+            />
+            <Label className="text-xs">启用（仅启用的技能会进入 Agent 勾选项）</Label>
           </div>
-          <ConnectorBindingEditor
-            value={form.connectorBinding}
-            onChange={(v) => setForm({ ...form, connectorBinding: v })}
-          />
-
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
-          <Button className="bg-brand text-brand-foreground hover:opacity-90" onClick={handleSave}>保存</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            取消
+          </Button>
+          <Button
+            className="bg-brand text-brand-foreground hover:opacity-90"
+            disabled={saving}
+            onClick={handleSave}
+          >
+            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}保存
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

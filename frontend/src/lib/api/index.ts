@@ -26,3 +26,4 @@ export {
   type ChatEventName,
   type ChatSendPayload,
 } from "./chat";
+export { skillsApi, type SkillViewModel, type SkillSource, type SkillForm } from "./skills";

@@ -128,6 +128,47 @@ export interface OutputFile {
   modified_at: string;
 }
 
+// ── Skills (backend/app/schemas/skill.py) ───────────────────────────────────
+
+export type SkillSource = "内置" | "自建" | "ZIP 导入" | "扫描发现";
+
+export interface SkillRead {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  enabled: boolean;
+  source: SkillSource;
+  files: number;
+  skill_md_path: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SkillCreate {
+  name: string;
+  slug: string;
+  description: string;
+  enabled: boolean;
+  content: string;
+}
+
+export interface SkillUpdate {
+  name: string;
+  description: string;
+  enabled: boolean;
+}
+
+export interface SkillScanResult {
+  discovered: SkillRead[];
+  total: number;
+}
+
+export interface SkillImportResult {
+  skill: SkillRead;
+  files: number;
+}
+
 // ── Generic envelope ────────────────────────────────────────────────────────
 
 /** FastAPI error body for non-2xx responses. */

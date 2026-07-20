@@ -193,7 +193,7 @@
         "Use agent-browser to open /skills, create or import a skill and enable it, then open /agents editor and confirm the skill appears in selectable options"
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "",
       "retryCount": 0,
       "blocked": false
