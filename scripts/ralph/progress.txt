@@ -231,3 +231,15 @@
   - 闭环浏览器验收要在相关 pytest 完成后重新读取 `/api/models`、`/api/agents`、`/api/tools`；测试会重置 workspace 配置。
   - 全仓前端 lint 的既有 Prettier 债务与 story 无关时，保留完整失败基线，并对修改文件执行 ESLint/Prettier 以验证本次范围。
 ---
+
+## 2026-07-20 13:11 - US-011
+- 复核既有真实闭环实现并完成浏览器主路径：复用本地 OpenAI 兼容 SSE mock，浏览器使用默认 Agent 发送任务后，页面由后端 SSE 显示 `write_file`、`read_file`、`execute_command` 三项工具调用及结果、最终回复和 `browser-closed-loop.txt` 下载入口。
+- 刷新页面后，浏览器重新请求会话详情与 outputs API，恢复同一任务、三张完成的工具卡和下载入口；未依赖 mock-store 种子。
+- 更改的文件：`scripts/ralph/progress.txt`（本轮无源代码改动；现有 US-011 实现已满足验收）。
+- 验证：后端 `uv run pytest tests/test_models_api.py tests/test_tools_api.py tests/test_agents_api.py tests/test_conversations_api.py tests/test_conversations_store.py tests/test_chat_send_api.py`（83 passed）、`uv run mypy app`；前端 `npx tsc -b --noEmit`、US-011 文件 ESLint 与 Prettier、`npm run build` 均通过。全仓 `npm run lint` 仍有 590 条既有 Prettier 错误；`npm run typecheck` 和 `tests/test_skills_api.py` 在当前仓库不存在，已改用实际配置的等效检查。
+- 浏览器验证：复用 `http://127.0.0.1:5192`、`:8000` 和 `:18080`，确认 `POST /api/chat/send` 返回 200，刷新后 `GET /api/conversations/{id}` 与 `GET /api/conversations/{id}/outputs` 返回 200 并驱动 UI 恢复。
+- **未来迭代的学习：**
+  - pattern：浏览器闭环验收在发送前应确认 API 返回的 Agent、模型和三项工具均已启用；以新会话的真实 `conversation_id` 构造 outputs 路径可同时验证工具写入和下载恢复。
+  - 陷阱：本地 SSE mock 仅实现流式 chat endpoint，模型“连接测试”期待普通 JSON，不能将该连接测试失败误判为 Agent Loop 流式失败。
+  - 有用的上下文：刷新后的 `/api/conversations/{id}` 与 `/outputs` 网络请求，以及 UI 中恢复的工具卡和下载链接，共同证明前端没有回退到 mock-store。
+---
