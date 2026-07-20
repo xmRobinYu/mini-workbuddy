@@ -87,7 +87,7 @@ function SettingsPage() {
         </Section>
 
         <Section icon={Shield} title="安全" desc="密钥保护、命令沙箱、路径校验（P0），Bearer Token 认证（P1）。">
-          <Row label="启用命令沙箱" desc="run_command 仅执行白名单命令" defaultChecked />
+          <Row label="启用命令沙箱" desc="execute_command 仅执行白名单命令" defaultChecked />
           <Row label="路径越权校验" desc="限制读写在 workspace 目录内" defaultChecked />
           <Row label="Bearer Token 认证" desc="P1 · 对外暴露 API 时启用" />
         </Section>

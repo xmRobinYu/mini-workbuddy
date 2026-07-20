@@ -167,7 +167,7 @@ const initialModels: Model[] = [
 const initialTools: Tool[] = [
   { key: "read_file", name: "读文件", desc: "读取 workspace 目录下的文本文件，返回文件内容与元信息。", enabled: true, detail: "支持相对路径与绝对路径校验，防止越权访问。", icon: "file" },
   { key: "write_file", name: "写文件", desc: "在 workspace 目录写入文件，采用原子写入 + 文件锁，保证一致性。", enabled: true, detail: "写入前会校验路径白名单，二进制文件将拒绝写入。", icon: "pen" },
-  { key: "run_command", name: "命令行", desc: "在受限沙箱中执行 shell 命令，超时 30 秒自动终止。", enabled: true, detail: "命令白名单：ls / cat / grep / bun / node / python / git ...", icon: "terminal" },
+  { key: "execute_command", name: "命令行", desc: "在受限沙箱中执行 shell 命令，超时 30 秒自动终止。", enabled: true, detail: "命令白名单：ls / cat / grep / bun / node / python / git ...", icon: "terminal" },
 ];
 
 const initialSkills: Skill[] = [
@@ -180,9 +180,9 @@ const initialSkills: Skill[] = [
 ];
 
 const initialAgents: Agent[] = [
-  { id: "a1", name: "主 Agent", slug: "main", desc: "编排者角色，可调度所有子 Agent 完成复杂任务", systemPrompt: "你是主 Agent，负责规划与调度子 Agent。", modelId: "m1", toolKeys: ["read_file", "write_file", "run_command"], skillIds: ["s1", "s4"], tags: ["编排", "全能"], system: true },
+  { id: "a1", name: "主 Agent", slug: "main", desc: "编排者角色，可调度所有子 Agent 完成复杂任务", systemPrompt: "你是主 Agent，负责规划与调度子 Agent。", modelId: "m1", toolKeys: ["read_file", "write_file", "execute_command"], skillIds: ["s1", "s4"], tags: ["编排", "全能"], system: true },
   { id: "a2", name: "文档助手", slug: "doc", desc: "擅长 Markdown 撰写、会议纪要整理、PRD 生成", systemPrompt: "你擅长撰写清晰、结构化的中文文档。", modelId: "m3", toolKeys: ["read_file", "write_file"], skillIds: ["s1", "s2"], tags: ["写作", "整理"] },
-  { id: "a3", name: "代码助手", slug: "code", desc: "代码阅读、重构、调试与命令行执行", systemPrompt: "你是资深工程师，输出高质量代码和解释。", modelId: "m2", toolKeys: ["read_file", "write_file", "run_command"], skillIds: ["s4"], tags: ["编码", "调试"] },
+  { id: "a3", name: "代码助手", slug: "code", desc: "代码阅读、重构、调试与命令行执行", systemPrompt: "你是资深工程师，输出高质量代码和解释。", modelId: "m2", toolKeys: ["read_file", "write_file", "execute_command"], skillIds: ["s4"], tags: ["编码", "调试"] },
   { id: "a4", name: "产品经理", slug: "pm", desc: "从想法到用户故事、功能矩阵、验收标准", systemPrompt: "你是资深产品经理，输出 PRD 与验收标准。", modelId: "m3", toolKeys: ["read_file"], skillIds: ["s1"], tags: ["产品", "规划"] },
   { id: "a5", name: "翻译助手", slug: "translate", desc: "中英双向翻译，保留 Markdown 结构与技术术语", systemPrompt: "你负责中英双向翻译，保留 Markdown 结构。", modelId: "m1", toolKeys: ["read_file"], skillIds: ["s6"], tags: ["翻译"] },
 ];

@@ -79,7 +79,7 @@ const rows: LogRow[] = [
     ],
   },
   {
-    id: "2", time: `${dstr} 14:32:07`, type: "tool", event: "run_command", agent: "主 Agent",
+    id: "2", time: `${dstr} 14:32:07`, type: "tool", event: "execute_command", agent: "主 Agent",
     status: "ok", level: "info", latency: "820ms", detail: "$ bun run build",
     input: { command: "bun run build", cwd: "/dev-server", timeout: 60 },
     output: { exitCode: 0, stdout: "vite v7.0.0 building for production...\n✓ built in 812ms", stderr: "" },
@@ -131,7 +131,7 @@ const rows: LogRow[] = [
     ],
   },
   {
-    id: "8", time: `${dstr} 10:29:45`, type: "tool", event: "run_command", agent: "代码助手",
+    id: "8", time: `${dstr} 10:29:45`, type: "tool", event: "execute_command", agent: "代码助手",
     status: "error", level: "error", latency: "30.0s", detail: "命令超时：git log --all",
     input: { command: "git log --all", timeout: 30 },
     output: { error: "TimeoutError", message: "Command exceeded 30s and was killed." },

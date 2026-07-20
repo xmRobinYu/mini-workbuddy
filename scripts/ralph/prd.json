@@ -76,7 +76,7 @@
         "Use agent-browser to open /tools, toggle execute_command or another tool, refresh, and see the same enabled state"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "",
       "retryCount": 0,
       "blocked": false
