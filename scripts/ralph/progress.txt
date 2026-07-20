@@ -289,3 +289,19 @@
   - 陷阱：测试会重置 workspace 运行态，浏览器闭环验收须在 pytest 之后重新读取 /api/models、/api/agents、/api/tools、/api/skills。
   - 未做：US-012（记忆只读 API）/US-013（日志投影 API）为计划中 P1 可选项，按计划非主闭环阻塞项，未在本轮实现。
 ---
+
+## 2026-07-21 05:46 - US-012
+- [自动重启] Claude 上下文超限，已终止当前 Agent；2 秒后以新 Agent 进入下一轮继续。未计入常规重试次数。
+
+
+## 2026-07-21 06:10 - US-012
+- US-012 已在前一轮（commit 1d623e5）完整实现并通过质量检查；本轮为上下文超限重启后的回归确认，未改动业务代码。
+- 复核内容：后端 `GET/PUT /api/memory/long-term`、`GET /api/memory/short-term`、`GET /api/memory/stats`（均经 `memory_store` + FileLock，读写限制在 `workspace/memory` 与 `workspace/memory.md`）；前端 `memoryApi` 域门面 + camelCase ViewModel，`memory.tsx` 完全由真实 API 驱动，编辑对话框走 PUT。
+- 验证：`uv run pytest` 168 passed（含 7 条 test_memory_api）；`uv run mypy app` Success（39 文件）；前端 `npm exec -- tsc -b --noEmit` exit 0；`eslint` 对 memory 相关文件 exit 0。
+- Live 复核（复用已在 8000 端口运行的后端）：GET/PUT `/api/memory/long-term` 往返一致；超限写入（51201B）返回 413；`stats`/`short-term` 正常返回。未启动新 dev server。
+- 更改的文件：仅 `scripts/ralph/progress.txt`（业务代码无改动）。
+- **未来迭代的学习：**
+  - pattern：memory 读写路径已统一收口在 `memory_store`（FileLock 串行化），API 层只做 schema 映射与 404/413；新增长期记忆字段时改 `schemas/memory.py` + `memory_store`，前端在 `lib/api/memory.ts` 的 mapper 与 `types.ts` 的 Read 接口同步即可。
+  - 陷阱：`MEMORY_ARCHIVE_DIR` 仅 `memory_stats` 用到 `rglob` 计数；测试隔离需同时 patch `memory_store.*` 与 `app.core.config.*`（config 被其它模块 import）。
+  - workflowMode 未设置 → develop_and_validate，开发阶段不置 `passes=true`，交由 Validator。
+---
