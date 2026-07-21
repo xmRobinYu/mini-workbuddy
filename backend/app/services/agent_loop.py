@@ -653,10 +653,15 @@ async def run_agent_loop(
             }
             for c in normalised_calls
         ]
+        # Persist the call with a ``call_type`` discriminator (tool/skill) so
+        # the logs projection and tool dispatcher can tell them apart, while
+        # keeping ``type: function`` per the OpenAI tool-call wire spec —
+        # replaying this assistant message back to the model must not carry
+        # ``type: tool`` or a strict gateway rejects the request with 400.
         persisted_calls = [
             {
                 **wire_call,
-                "type": call["type"],
+                "call_type": call["type"],
             }
             for wire_call, call in zip(wire_tool_calls, normalised_calls, strict=True)
         ]

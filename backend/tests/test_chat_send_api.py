@@ -787,7 +787,10 @@ def test_skill_call_is_dispatched_and_keeps_skill_type(tmp_path: Any) -> None:
     assert detail is not None
     call = next(event for event in detail["events"] if event["type"] == "tool_call")
     result = next(event for event in detail["events"] if event["role"] == "tool")
-    assert call["data"]["tool_calls"][0]["type"] == "skill"
+    # Persisted tool_call keeps the OpenAI wire ``type: function`` but carries
+    # a ``call_type`` discriminator so skill vs tool is still recoverable.
+    assert call["data"]["tool_calls"][0]["type"] == "function"
+    assert call["data"]["tool_calls"][0]["call_type"] == "skill"
     assert result["data"]["type"] == "skill"
     assert result["data"]["ok"] is True
     assert "摘要技能" in result["data"]["result"]

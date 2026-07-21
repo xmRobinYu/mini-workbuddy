@@ -58,7 +58,6 @@ def _classify(event: dict[str, Any]) -> LogType | None:
         return "skill" if data.get("type") == "skill" else "tool"
     return None
 
-
 def _coerce_arguments(raw: Any) -> dict[str, Any]:
     """Normalise a tool call's ``arguments`` into a dict.
 
