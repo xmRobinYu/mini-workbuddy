@@ -81,6 +81,28 @@ def _assistant_message_event(text: str) -> dict:
     }
 
 
+def _tool_call_event_string_args(call_id: str, name: str, args_json: str) -> dict:
+    """Like :func:`_tool_call_event` but persists ``arguments`` as a JSON
+    string — the shape the agent loop actually writes to the JSONL (per the
+    OpenAI tool-call spec). The projection must parse this, not crash."""
+    return {
+        "role": "assistant",
+        "type": "tool_call",
+        "timestamp": "2026-07-21T10:00:00+00:00",
+        "tool_call_id": call_id,
+        "data": {
+            "text": "",
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "type": "tool",
+                    "function": {"name": name, "arguments": args_json},
+                }
+            ],
+        },
+    }
+
+
 # ── projection ──────────────────────────────────────────────────────────────
 
 
@@ -267,3 +289,48 @@ def test_corrupt_jsonl_lines_do_not_break_projection(tmp_path: Path) -> None:
     body = resp.json()
     # Both valid model events survive; the corrupt line is skipped.
     assert body["total"] == 2
+
+
+def test_tool_call_arguments_as_json_string_are_parsed() -> None:
+    """The agent loop persists ``arguments`` as a JSON string. The projection
+    must parse it back into a dict for the detail line and the ``input``
+    field — regression test for a 500 when arguments was a str."""
+    _reset()
+    with _client() as client:
+        created = _make_conversation(client)
+        cid = created["id"]
+        _append_event(
+            cid,
+            _tool_call_event_string_args("call-str", "read_file", '{"path": "memory.md"}'),
+        )
+        _append_event(cid, _tool_result_event("call-str", "read_file", "文件内容"))
+        resp = client.get("/api/logs?type=tool")
+    body = resp.json()
+    assert resp.status_code == 200, resp.text
+    assert body["total"] == 1
+    row = body["items"][0]
+    # The parsed arguments surface both in the summary and the input field.
+    assert row["detail"] == "读取 memory.md"
+    assert row["input"] == {"path": "memory.md"}
+
+
+def test_malformed_arguments_string_does_not_break_projection() -> None:
+    """A tool call whose ``arguments`` string is not valid JSON must degrade
+    gracefully (empty input) rather than 500."""
+    _reset()
+    with _client() as client:
+        created = _make_conversation(client)
+        cid = created["id"]
+        _append_event(
+            cid,
+            _tool_call_event_string_args("call-bad", "execute_command", "not-json{"),
+        )
+        _append_event(cid, _tool_result_event("call-bad", "execute_command", "ok"))
+        resp = client.get("/api/logs?type=tool")
+    body = resp.json()
+    assert resp.status_code == 200, resp.text
+    assert body["total"] == 1
+    row = body["items"][0]
+    assert row["input"] is None
+    assert row["detail"] == "execute_command"
+

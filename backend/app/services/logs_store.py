@@ -23,6 +23,7 @@ lines are already skipped by :func:`conversations_store._read_events`).
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from app.schemas.log import LogRead, LogType
@@ -56,6 +57,30 @@ def _classify(event: dict[str, Any]) -> LogType | None:
         data = event.get("data") or {}
         return "skill" if data.get("type") == "skill" else "tool"
     return None
+
+
+def _coerce_arguments(raw: Any) -> dict[str, Any]:
+    """Normalise a tool call's ``arguments`` into a dict.
+
+    The model returns ``arguments`` as a JSON string (per the OpenAI
+    tool-call spec), and that is how ``tool_call`` events are persisted to
+    the conversation JSONL. The projection works in dicts, so parse the
+    string here; a malformed or non-object payload degrades to an empty
+    dict rather than raising (a bad history should only blank the log
+    detail, never 500 the whole endpoint).
+    """
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        raw = raw.strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 
 def _detail_for_call(name: str, args: dict[str, Any], result: Any) -> str:
@@ -104,7 +129,7 @@ def _build_tool_arguments_index(
             fn = call.get("function") or {}
             index[call_id] = {
                 "name": fn.get("name", ""),
-                "arguments": fn.get("arguments") or {},
+                "arguments": _coerce_arguments(fn.get("arguments")),
             }
     return index
 
