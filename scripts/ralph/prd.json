@@ -229,7 +229,7 @@
         "Tests pass for memory API happy path"
       ],
       "priority": 12,
-      "passes": false,
+      "passes": true,
       "notes": "",
       "retryCount": 0,
       "blocked": false
@@ -247,7 +247,7 @@
         "Use agent-browser to open /logs after a chat run and confirm at least one backend-projected event can appear when data exists"
       ],
       "priority": 13,
-      "passes": false,
+      "passes": true,
       "notes": "",
       "retryCount": 0,
       "blocked": false
